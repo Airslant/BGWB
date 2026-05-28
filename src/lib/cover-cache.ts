@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join } from "node:path";
 
+import { withBasePath } from "./base-path";
 import type { GameSnapshot } from "./types";
 
 export type CoverKind = "image" | "thumbnail";
@@ -44,7 +45,7 @@ function manifestPath(bggId: string) {
 }
 
 function publicCoverUrl(bggId: string, kind: CoverKind) {
-  return `/api/covers/${encodeURIComponent(bggId)}/${kind}`;
+  return withBasePath(`/api/covers/${encodeURIComponent(bggId)}/${kind}`);
 }
 
 async function readManifest(bggId: string): Promise<CoverManifest> {

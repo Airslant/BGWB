@@ -13,10 +13,12 @@ import {
   setCache,
   upsertGameSnapshot
 } from "./db";
-import type { BggSearchResult, GameSnapshot, Locale } from "./types";
+import { decodeHtmlEntities } from "./html-entities";
+import type { BggSearchResult, BggThingType, GameSnapshot, Locale } from "./types";
 
 const SEARCH_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const THING_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const BGG_SUPPORTED_THING_TYPES = "boardgame,boardgameexpansion";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -39,7 +41,11 @@ function attrString(value: unknown) {
   }
 
   const attribute = (value as { "@_value"?: unknown })["@_value"];
-  return typeof attribute === "string" || typeof attribute === "number" ? String(attribute) : undefined;
+  return textString(attribute);
+}
+
+function textString(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? decodeHtmlEntities(value) : undefined;
 }
 
 function attrNumber(value: unknown) {
@@ -61,15 +67,20 @@ function normalizeDescription(value: unknown) {
     return undefined;
   }
 
-  return value
+  return decodeHtmlEntities(value)
     .replace(/\s+/g, " ")
     .replace(/&nbsp;/g, " ")
     .trim()
     .slice(0, 800);
 }
 
+function normalizeThingType(value: unknown): BggThingType {
+  return value === "boardgameexpansion" ? "boardgameexpansion" : "boardgame";
+}
+
 type BggThingXmlItem = {
   "@_id"?: string | number;
+  "@_type"?: string;
   name?: unknown;
   image?: string;
   thumbnail?: string;
@@ -130,7 +141,8 @@ function parseThingItem(item: BggThingXmlItem | undefined, fallbackBggId: string
 
   return {
     bggId: String(item["@_id"] ?? fallbackBggId),
-    name: primaryName?.["@_value"] ?? `BGG #${fallbackBggId}`,
+    thingType: normalizeThingType(item["@_type"]),
+    name: textString(primaryName?.["@_value"]) ?? `BGG #${fallbackBggId}`,
     yearPublished: attrNumber(item.yearpublished),
     image: typeof item.image === "string" ? item.image : undefined,
     thumbnail: typeof item.thumbnail === "string" ? item.thumbnail : undefined,
@@ -143,13 +155,13 @@ function parseThingItem(item: BggThingXmlItem | undefined, fallbackBggId: string
     averageRating: attrNumber(item.statistics?.ratings?.average),
     description: normalizeDescription(item.description),
     designers: compactList(
-      links.filter((link) => link["@_type"] === "boardgamedesigner").map((link) => link["@_value"] ?? "")
+      links.filter((link) => link["@_type"] === "boardgamedesigner").map((link) => textString(link["@_value"]) ?? "")
     ),
     categories: compactList(
-      links.filter((link) => link["@_type"] === "boardgamecategory").map((link) => link["@_value"] ?? "")
+      links.filter((link) => link["@_type"] === "boardgamecategory").map((link) => textString(link["@_value"]) ?? "")
     ),
     mechanics: compactList(
-      links.filter((link) => link["@_type"] === "boardgamemechanic").map((link) => link["@_value"] ?? "")
+      links.filter((link) => link["@_type"] === "boardgamemechanic").map((link) => textString(link["@_value"]) ?? "")
     )
   };
 }
@@ -188,23 +200,27 @@ export async function searchBgg(query: string, locale: Locale = "en") {
     return combinedResults;
   }
 
-  const cacheKey = `search:${normalizedQuery.toLowerCase()}`;
+  const cacheKey = `search:${normalizedQuery.toLowerCase()}:boardgames-and-expansions`;
   const cached = getCache<BggSearchResult[]>(cacheKey);
 
   if (cached) {
     return cached.map((result) => ({
       ...result,
+      thingType: result.thingType ?? "boardgame",
       displayName: result.displayName || result.name,
       canonicalName: result.canonicalName || result.name,
       locale
     }));
   }
 
-  const xml = await fetchBggXml(`/search?query=${encodeURIComponent(normalizedQuery)}&type=boardgame`);
+  const xml = await fetchBggXml(
+    `/search?query=${encodeURIComponent(normalizedQuery)}&type=${BGG_SUPPORTED_THING_TYPES}`
+  );
   const parsed = parser.parse(xml) as {
     items?: {
       item?: Array<{
         "@_id"?: string | number;
+        "@_type"?: string;
         name?: { "@_value"?: string };
         yearpublished?: { "@_value"?: string | number };
       }>;
@@ -214,6 +230,7 @@ export async function searchBgg(query: string, locale: Locale = "en") {
   const results = asArray(parsed.items?.item)
     .map((item) => ({
       bggId: String(item["@_id"] ?? ""),
+      thingType: normalizeThingType(item["@_type"]),
       name: attrString(item.name) ?? "",
       displayName: attrString(item.name) ?? "",
       canonicalName: attrString(item.name) ?? "",
@@ -245,20 +262,25 @@ export async function getBggThing(bggId: string, locale: Locale = "en") {
     return gameWithCachedCovers;
   }
 
-  const cacheKey = `thing:${bggId}`;
+  const cacheKey = `thing:${bggId}:boardgames-and-expansions`;
   const cached = getCache<GameSnapshot>(cacheKey);
 
   if (cached) {
-    const gameWithCachedCovers = await cacheGameCovers(cached);
+    const gameWithCachedCovers = await cacheGameCovers({
+      ...cached,
+      thingType: cached.thingType ?? "boardgame"
+    });
     upsertGameSnapshot(gameWithCachedCovers);
     return getGameSnapshot(bggId, locale) ?? applyGameNaming(gameWithCachedCovers, locale);
   }
 
-  const xml = await fetchBggXml(`/thing?id=${encodeURIComponent(bggId)}&type=boardgame&stats=1`);
+  const xml = await fetchBggXml(
+    `/thing?id=${encodeURIComponent(bggId)}&type=${BGG_SUPPORTED_THING_TYPES}&stats=1`
+  );
   const snapshot = parseThingXml(xml, [bggId])[0];
 
   if (!snapshot) {
-    throw new Error("没有找到这个 BGG 桌游。");
+    throw new Error("没有找到这个 BGG 桌游或扩展。");
   }
 
   const snapshotWithCachedCovers = await cacheGameCovers(snapshot);
@@ -269,15 +291,17 @@ export async function getBggThing(bggId: string, locale: Locale = "en") {
 }
 
 export async function refreshBggThing(bggId: string, locale: Locale = "en") {
-  const xml = await fetchBggXml(`/thing?id=${encodeURIComponent(bggId)}&type=boardgame&stats=1`);
+  const xml = await fetchBggXml(
+    `/thing?id=${encodeURIComponent(bggId)}&type=${BGG_SUPPORTED_THING_TYPES}&stats=1`
+  );
   const snapshot = parseThingXml(xml, [bggId])[0];
 
   if (!snapshot) {
-    throw new Error("没有找到这个 BGG 桌游。");
+    throw new Error("没有找到这个 BGG 桌游或扩展。");
   }
 
   const snapshotWithCachedCovers = await cacheGameCovers(snapshot);
-  setCache(`thing:${bggId}`, snapshotWithCachedCovers, THING_CACHE_TTL_SECONDS);
+  setCache(`thing:${bggId}:boardgames-and-expansions`, snapshotWithCachedCovers, THING_CACHE_TTL_SECONDS);
   upsertGameSnapshot(snapshotWithCachedCovers);
 
   return getGameSnapshot(bggId, locale) ?? applyGameNaming(snapshotWithCachedCovers, locale);

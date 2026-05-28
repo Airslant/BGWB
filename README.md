@@ -1,6 +1,6 @@
 # BGWB
 
-BGWB 是一个网页端桌游展示柜 MVP：用户用邮箱、昵称和密码注册登录，在无限画布上添加 BGG 桌游封面、备注和收藏状态，并通过公开只读链接分享。
+BGWB 是一个网页端桌游展示柜 MVP：用户用邮箱、昵称和密码注册登录，在无限画布上添加 BGG 桌游和扩展封面、备注和收藏状态，并通过公开只读链接分享。
 
 ## Data Model
 
@@ -33,13 +33,15 @@ BGG 现在是补数据源：搜索优先查 `game_localizations`、`game_aliases
 - `PUT /api/boards/:boardId?locale=`：保存 compact payload：`title`、`viewport`、`items[id,bggId,x,y,scale,coverMode,note,status]`。
 - `DELETE /api/boards/:boardId`：删除当前用户自己的白板。
 - `GET /api/share/:shareId?locale=`：公开只读读取白板。
-- `GET /api/bgg/search?q=&locale=`：登录用户本地优先搜索，结果包含 `displayName`、`canonicalName`、`matchedAlias`、`source` 等字段。
-- `GET /api/bgg/things/:bggId?locale=`：登录用户读取桌游详情并应用当前语言的展示名。
+- `GET /api/bgg/search?q=&locale=`：登录用户本地优先搜索桌游和扩展，结果包含 `displayName`、`canonicalName`、`matchedAlias`、`thingType` 等字段。
+- `GET /api/bgg/things/:bggId?locale=`：登录用户读取桌游或扩展详情并应用当前语言的展示名。
 - `GET /api/bgg/things/:bggId/naming?locale=`：读取平台维护的英文名、中文名、英文别名、中文别名。公开 `PUT` 当前返回 403。
 - `GET /api/covers/:bggId/:kind`：读取本地缓存封面，`kind` 为 `image` 或 `thumbnail`。
-- `/admin`：管理后台入口。管理员由 `ADMIN_EMAILS` 指定，后台包含用户管理、桌游信息维护和数据分析。
+- `/admin`：管理后台入口。管理员由 `ADMIN_EMAILS` 指定，后台包含用户管理、桌游信息维护、汉化导入导出和数据分析。
 - `GET /api/admin/me`、`GET /api/admin/users`、`PATCH /api/admin/users/:userId`：管理员身份和用户启用/禁用。
 - `GET /api/admin/games`、`GET/PUT /api/admin/games/:bggId`、`POST /api/admin/games/:bggId/refresh`：桌游维护字段和 BGG 详情刷新。
+- `GET /api/admin/translations/export`：导出当前新增待翻译内容为 Markdown 下载。
+- `POST /api/admin/translations/import`：上传翻译后的 Markdown，并将非空翻译结果写入本地化表。
 - `GET /api/admin/analytics`：基于现有表的用户、白板、桌游和汉化覆盖分析。
 
 ## Local Setup
@@ -88,9 +90,13 @@ npm run typecheck
 npm run build
 npm run bgg:import-index
 npm run bgg:import-index -- --use-existing
+npm run bgg:export-translations
+npm run bgg:import-translations -- translations/bgg-translation-2026-05-27.md
 ```
 
-`npm run bgg:import-index` 会下载 BGG 官方 `bg_ranks` CSV 并导入 `game_index`。如果已经手动下载到 `.data/bgg/bg_ranks.csv`，使用 `npm run bgg:import-index -- --use-existing` 直接导入本地文件。CSV 只作为本地搜索索引；机制、设计师、人数等完整详情仍由 `/xmlapi2/thing` 按用户实际选择按需补齐，并长期写入 `games`。封面首次获取详情时会下载到 `.data/covers`，前端优先读取本地封面，失败时回退 BGG 原始图片 URL。
+`npm run bgg:import-index` 会下载 BGG 官方 `bg_ranks` CSV 并导入 `game_index`。如果已经手动下载到 `.data/bgg/bg_ranks.csv`，使用 `npm run bgg:import-index -- --use-existing` 直接导入本地文件。CSV 只作为本地搜索索引；机制、设计师、人数等完整详情仍由 `/xmlapi2/thing` 按用户实际选择按需补齐桌游或扩展，并长期写入 `games`。封面首次获取详情时会下载到 `.data/covers`，前端优先读取本地封面，失败时回退 BGG 原始图片 URL。
+
+后台 `/admin/translations` 可直接下载新增待翻译 Markdown，并上传翻译后的 Markdown 回填。CLI 翻译命令保留用于本地维护或批处理。
 
 ## Product Source
 

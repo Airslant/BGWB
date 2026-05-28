@@ -1,9 +1,21 @@
 /** @type {import('next').NextConfig} */
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
 const nextConfig = {
+  basePath: basePath || undefined,
   devIndicators: false,
   reactStrictMode: true,
   async headers() {
     return [
+      {
+        source: "/assets/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable"
+          }
+        ]
+      },
       {
         source: "/(.*)",
         headers: [

@@ -23,6 +23,8 @@ import {
 import Link from "next/link";
 import { type CSSProperties, MouseEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { withBasePath } from "@/lib/base-path";
+import { createId } from "@/lib/id";
 import { getGameDisplayName, UI_COPY } from "@/lib/i18n";
 import {
   BOARD_ANNOTATION_COLORS,
@@ -221,7 +223,7 @@ function createAnnotation(kind: BoardAnnotationKind, x: number, y: number): Boar
   const size = DEFAULT_ANNOTATION_SIZE[kind];
 
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     kind,
     x,
     y,
@@ -459,7 +461,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const isReadOnly = mode === "view";
-  const boardApiPath = apiPath ?? `/api/boards/${boardId}`;
+  const boardApiPath = withBasePath(apiPath ?? `/api/boards/${boardId}`);
   const boardBackHref = backHref ?? "/boards";
   const latestBoardRef = useRef({
     title,
@@ -1309,7 +1311,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     const world = clientToWorld(centerX, centerY);
 
     const nextItem: BoardItem = {
-      id: crypto.randomUUID(),
+      id: createId(),
       bggId: game.bggId,
       x: world.x - CARD_WIDTH / 2,
       y: world.y - 120,
@@ -1898,7 +1900,7 @@ function GameCard({
           <img
             alt={displayName}
             draggable={false}
-            src={coverUrl}
+            src={withBasePath(coverUrl)}
             onLoad={(event) => {
               const { naturalHeight, naturalWidth } = event.currentTarget;
 
@@ -2116,7 +2118,7 @@ function SearchDialog({
 
       try {
         const response = await fetch(
-          `/api/bgg/search?q=${encodeURIComponent(query.trim())}&locale=${encodeURIComponent(locale)}`,
+          withBasePath(`/api/bgg/search?q=${encodeURIComponent(query.trim())}&locale=${encodeURIComponent(locale)}`),
           {
           signal: controller.signal
           }
@@ -2150,7 +2152,7 @@ function SearchDialog({
     setSearchError("");
 
     try {
-      const response = await fetch(`/api/bgg/things/${result.bggId}?locale=${encodeURIComponent(locale)}`);
+      const response = await fetch(withBasePath(`/api/bgg/things/${result.bggId}?locale=${encodeURIComponent(locale)}`));
       const payload = (await response.json()) as { game?: GameSnapshot; error?: string };
 
       if (!response.ok || !payload.game) {
@@ -2195,12 +2197,15 @@ function SearchDialog({
           {results.map((result) => {
             const resultName = result.displayName || result.name;
             const canonicalName = result.canonicalName && result.canonicalName !== resultName ? result.canonicalName : "";
+            const resultMeta = [result.yearPublished, result.thingType === "boardgameexpansion" ? t.expansion : ""]
+              .filter(Boolean)
+              .join(" · ");
 
             return (
               <button className="result-row" key={result.bggId} type="button" onClick={() => selectResult(result)}>
                 <span>
                   <strong>{resultName}</strong>
-                  {result.yearPublished ? <em>{result.yearPublished}</em> : null}
+                  {resultMeta ? <em>{resultMeta}</em> : null}
                   {result.matchedAlias ? <small>{t.aliasPrefix}: {result.matchedAlias}</small> : null}
                   {canonicalName ? <small>{t.originalName}: {canonicalName}</small> : null}
                 </span>

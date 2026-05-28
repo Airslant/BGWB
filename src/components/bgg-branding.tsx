@@ -1,6 +1,8 @@
+import { withBasePath } from "@/lib/base-path";
+
 export const BGG_HOME_URL = "https://boardgamegeek.com/";
-export const BGG_ICON_URL = "/assets/bgg/favicon.ico";
-export const BGG_POWERED_LOGO_URL = "/assets/bgg/powered-by-bgg.png";
+export const BGG_ICON_URL = withBasePath("/assets/bgg/favicon.ico");
+export const BGG_POWERED_LOGO_URL = withBasePath("/assets/bgg/powered-by-bgg.png");
 
 export function getBggGameUrl(bggId: string) {
   return `${BGG_HOME_URL}boardgame/${encodeURIComponent(bggId)}`;

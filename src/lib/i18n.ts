@@ -1,4 +1,5 @@
 import { BOARD_STATUSES, SUPPORTED_LOCALES, type BoardStatus, type GameSnapshot, type Locale } from "./types";
+import { decodeHtmlEntities } from "./html-entities";
 
 export const DEFAULT_LOCALE: Locale = "en";
 
@@ -23,7 +24,7 @@ export function isSupportedLocale(value: unknown): value is Locale {
 }
 
 export function getGameDisplayName(game: Pick<GameSnapshot, "name" | "displayName" | "localizedNames">, locale: Locale) {
-  return game.displayName || game.localizedNames?.[locale] || game.localizedNames?.en || game.name;
+  return decodeHtmlEntities(game.displayName || game.localizedNames?.[locale] || game.localizedNames?.en || game.name);
 }
 
 export function getDefaultBoardTitle(locale: Locale) {
@@ -153,7 +154,7 @@ export const UI_COPY = {
     saveFailed: "Save failed. Try again.",
     retrySave: "Retry",
     unsaved: "Unsaved changes",
-    synced: "Board saved locally",
+    synced: "Board synced",
     emptyBoard: "Add first game",
     removeGame: "Remove game",
     openOnBgg: "Open on BoardGameGeek",
@@ -180,6 +181,7 @@ export const UI_COPY = {
     noResults: "No results. Try another name.",
     aliasPrefix: "Alias",
     originalName: "Original",
+    expansion: "Expansion",
     people: "players",
     minutes: "min",
     language: "Language",
@@ -298,7 +300,7 @@ export const UI_COPY = {
     saveFailed: "保存失败，请重试",
     retrySave: "重试",
     unsaved: "有未保存修改",
-    synced: "当前白板已同步到本地数据库",
+    synced: "当前白板已同步",
     emptyBoard: "添加第一款桌游",
     removeGame: "移除桌游",
     openOnBgg: "打开 BoardGameGeek 页面",
@@ -325,6 +327,7 @@ export const UI_COPY = {
     noResults: "没有搜索结果，换一个名字试试。",
     aliasPrefix: "别名",
     originalName: "原名",
+    expansion: "扩展",
     people: "人",
     minutes: "分钟",
     language: "语言",

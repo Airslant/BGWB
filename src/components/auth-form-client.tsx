@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
+import { withBasePath } from "@/lib/base-path";
+
 import { BggAttribution } from "./bgg-branding";
+import { BrandHeroImage } from "./brand-hero-image";
 import { LanguageSelect, useLocale } from "./use-locale";
 
 type AuthFormClientProps = {
@@ -44,7 +47,7 @@ export function AuthFormClient({ mode }: AuthFormClientProps) {
     setIsSendingCode(true);
 
     try {
-      const response = await fetch("/api/auth/register/code", {
+      const response = await fetch(withBasePath("/api/auth/register/code"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -73,7 +76,7 @@ export function AuthFormClient({ mode }: AuthFormClientProps) {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`/api/auth/${mode}`, {
+      const response = await fetch(withBasePath(`/api/auth/${mode}`), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -96,6 +99,7 @@ export function AuthFormClient({ mode }: AuthFormClientProps) {
 
   return (
     <main className="auth-shell">
+      <BrandHeroImage />
       <section className="auth-panel" aria-labelledby="auth-title">
         <LanguageSelect label={t.language} locale={locale} onChange={setLocale} />
         <h1 id="auth-title">{isRegister ? t.registerTitle : t.loginTitle}</h1>

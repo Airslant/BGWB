@@ -30,7 +30,7 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
   - 我的白板列表：新建、打开、重命名、删除白板，分享公开只读链接；新建白板前先输入白板名称，名称限制 20 个字符；删除白板需二次确认。
   - 白板页：无限画布、拖拽平移、触摸板 pinch 缩放、快捷键缩放、添加桌游、移动桌游卡片、整理工具、右上角分享、自动保存。
   - 分享页：公开只读展示白板，保留浏览、平移、缩放和整理工具对象展示，不提供编辑、添加或保存。
-  - 添加桌游：点击添加后弹出搜索框，调用 BGG 搜索，展示结果列表，用户选择后拉取封面与基础信息。
+  - 添加桌游：点击添加后弹出搜索框，调用 BGG 搜索桌游和扩展，展示结果列表，用户选择后拉取封面与基础信息。
   - 管理后台：`/admin` 提供用户管理、桌游信息管理和数据分析。
 - 桌游卡片：默认显示封面；hover 显示基础信息、备注、收藏状态；支持编辑备注和状态；支持右键菜单；hover 信息顶部提供跳转该游戏 BoardGameGeek 页面入口。
 - 白板整理工具：
@@ -57,6 +57,7 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
 - 管理后台：
   - 用户管理支持按邮箱/昵称检索，展示角色、状态、注册时间、白板数、卡片数；支持禁用/启用普通用户。
   - 桌游信息管理支持按 BGG ID、英文名、中文名、别名搜索；BGG 原始字段只读；可编辑中英文名、别名、中文简介、分类/机制中文翻译。
+  - 汉化导入导出支持导出新增待翻译内容为 Markdown；管理员本地翻译后可上传 Markdown，系统自动导入非空中文名、分类/机制术语和中文简介。
   - 数据分析基于现有表统计用户、白板、卡片、本地桌游、中文覆盖和最近 30 天趋势；第一版不新增事件埋点。
 - 用户个人数据：
   - 当前白板内可编辑的是卡片收藏状态和备注。
@@ -81,8 +82,8 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
 - `PUT /api/boards/:boardId`：保存当前用户白板个人数据，payload 包括 `title`、`viewport`、`items[id,bggId,x,y,scale,coverMode,note,status]` 和 `annotations`；服务端从本地 `games` 表恢复桌游主数据。
 - `DELETE /api/boards/:boardId`：删除当前用户白板。
 - `GET /api/share/:shareId`：公开只读读取分享白板。
-- `GET /api/bgg/search?q=`：服务端本地优先搜索；本地无命中时 fallback 到 BGG `/xmlapi2/search?query=&type=boardgame`，返回标准化结果列表。
-- `GET /api/bgg/things/:bggId`：服务端代理 BGG `/xmlapi2/thing?id=&type=boardgame&stats=1`，返回标准化桌游详情。
+- `GET /api/bgg/search?q=`：服务端本地优先搜索桌游和扩展；本地无命中时 fallback 到 BGG `/xmlapi2/search?query=&type=boardgame,boardgameexpansion`，返回标准化结果列表。
+- `GET /api/bgg/things/:bggId`：服务端代理 BGG `/xmlapi2/thing?id=&type=boardgame,boardgameexpansion&stats=1`，返回标准化桌游或扩展详情。
 - `GET /api/bgg/things/:bggId/naming`：读取平台维护的本地名称和别名。MVP 不开放公开写入。
 - `GET /api/covers/:bggId/:kind`：读取本地缓存封面，`kind` 为 `image` 或 `thumbnail`。
 - `GET /api/admin/me`：返回当前管理员信息。
@@ -92,6 +93,8 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
 - `GET /api/admin/games/:bggId`：管理员桌游详情。
 - `PUT /api/admin/games/:bggId`：保存平台维护字段。
 - `POST /api/admin/games/:bggId/refresh`：从 BGG 刷新详情。
+- `GET /api/admin/translations/export`：管理员导出当前新增待翻译内容，返回 Markdown 附件；不请求 BGG。
+- `POST /api/admin/translations/import`：管理员上传翻译后的 Markdown，事务导入非空翻译结果；空单元格跳过，不删除已有翻译。
 - `GET /api/admin/analytics`：后台汇总、榜单和趋势数据。
 - 语言参数：
   - 支持 `locale=en` / `locale=zh-CN` query。
@@ -105,7 +108,7 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
   - `BoardItem`: `id`, `bggId`, `x`, `y`, `scale`, `coverMode`, `note`, `status`, `gameSnapshot`
   - `BoardAnnotation`: `id`, `kind`, `x`, `y`, `width`, `height`, `text`, `style`, `createdAt`, `updatedAt`，`kind` 为 `text` / `sticky` / `section` / `rectangle` / `line` / `arrow`。
   - `BoardSavePayload`: `title`, `viewport`, `items[id,bggId,x,y,scale,coverMode,note,status]`, `annotations`，不包含 `gameSnapshot`。
-  - `GameSnapshot`: API 返回给前端的桌游快照结构，包含可选 `displayName`、`canonicalName`、`localizedNames`、`aliases`、`localImage`、`localThumbnail`。
+  - `GameSnapshot`: API 返回给前端的桌游/扩展快照结构，包含可选 `thingType`、`displayName`、`canonicalName`、`localizedNames`、`aliases`、`localImage`、`localThumbnail`。
   - `Game`: 本地桌游主数据，按 `bggId` 唯一保存 BGG 详情，多个白板复用同一份桌游资料。
   - `GameLocalization`: `bggId`, `locale`, `name`, `source`, `updatedAt`。
   - `GameAlias`: `id`, `bggId`, `locale`, `alias`, `aliasSearch`, `source`, `updatedAt`。
@@ -151,6 +154,9 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
 - 管理员可搜索用户、禁用/启用普通用户；不能禁用自己或其它管理员。
 - 禁用用户后登录失败，现有会话失效，编辑 API 不可用；公开分享页仍可只读访问。
 - 管理员可搜索桌游，保存中文名/别名/简介/术语翻译后，前台搜索和卡片展示立即使用新数据。
+- 管理员可在后台导出新增待翻译 Markdown；导出的游戏名、分类、机制和简介只包含当前缺失中文维护内容的项目。
+- 管理员上传翻译后的 Markdown 后，非空中文名、分类/机制术语和中文简介写入本地化表；刷新前台搜索和卡片展示立即生效。
+- 上传空文件、超大文件、非管理员上传或跨站请求都会被拒绝；导入过程失败时不会写入半份数据。
 - 管理员刷新 BGG 详情失败时不破坏已有本地数据。
 - 数据分析在空库、有用户无白板、有白板有卡片、有翻译数据时都能正常展示。
 - 登录后能进入我的白板列表，新建白板后进入编辑页。

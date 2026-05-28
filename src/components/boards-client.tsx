@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
+import { withBasePath } from "@/lib/base-path";
 import type { Board, BoardSummary, User } from "@/lib/types";
 
 import { LanguageSelect, useLocale } from "./use-locale";
@@ -37,7 +38,7 @@ export function BoardsClient() {
     setError("");
 
     try {
-      const response = await fetch("/api/auth/me");
+      const response = await fetch(withBasePath("/api/auth/me"));
       const me = (await response.json()) as { user?: User | null };
 
       if (!me.user) {
@@ -47,7 +48,7 @@ export function BoardsClient() {
 
       setUser(me.user);
 
-      const boardsResponse = await fetch("/api/boards");
+      const boardsResponse = await fetch(withBasePath("/api/boards"));
       const payload = (await boardsResponse.json()) as { boards?: BoardSummary[]; error?: string };
 
       if (!boardsResponse.ok) {
@@ -105,7 +106,7 @@ export function BoardsClient() {
 
     try {
       if (nameDialog?.mode === "rename") {
-        const response = await fetch(`/api/boards/${nameDialog.board.id}?locale=${encodeURIComponent(locale)}`, {
+        const response = await fetch(withBasePath(`/api/boards/${nameDialog.board.id}?locale=${encodeURIComponent(locale)}`), {
           method: "PUT",
           headers: {
             "Content-Type": "application/json"
@@ -134,7 +135,7 @@ export function BoardsClient() {
         return;
       }
 
-      const response = await fetch(`/api/boards?locale=${encodeURIComponent(locale)}`, {
+      const response = await fetch(withBasePath(`/api/boards?locale=${encodeURIComponent(locale)}`), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -163,7 +164,7 @@ export function BoardsClient() {
     setError("");
 
     try {
-      const response = await fetch(`/api/boards/${deleteTarget.id}`, { method: "DELETE" });
+      const response = await fetch(withBasePath(`/api/boards/${deleteTarget.id}`), { method: "DELETE" });
       const payload = (await response.json()) as { error?: string };
 
       if (!response.ok) {
@@ -178,7 +179,7 @@ export function BoardsClient() {
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch(withBasePath("/api/auth/logout"), { method: "POST" });
     router.push("/login");
   }
 
@@ -196,7 +197,7 @@ export function BoardsClient() {
     }
 
     try {
-      const response = await fetch("/api/auth/me", {
+      const response = await fetch(withBasePath("/api/auth/me"), {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json"
@@ -231,7 +232,7 @@ export function BoardsClient() {
     }
 
     try {
-      const response = await fetch("/api/auth/password", {
+      const response = await fetch(withBasePath("/api/auth/password"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -267,7 +268,7 @@ export function BoardsClient() {
     setAccountSubmitting("delete");
 
     try {
-      const response = await fetch("/api/auth/me", {
+      const response = await fetch(withBasePath("/api/auth/me"), {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json"
@@ -288,7 +289,7 @@ export function BoardsClient() {
   }
 
   async function shareBoard(board: BoardSummary) {
-    const url = `${window.location.origin}/s/${board.shareId}`;
+    const url = `${window.location.origin}${withBasePath(`/s/${board.shareId}`)}`;
 
     try {
       if (navigator.share) {

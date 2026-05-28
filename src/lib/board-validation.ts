@@ -19,6 +19,7 @@ import {
   type GameSnapshot,
   type Viewport
 } from "./types";
+import { createId } from "./id";
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
 const DEFAULT_STATUS: BoardStatus = "拥有";
@@ -144,7 +145,7 @@ function sanitizeItem(
   }
 
   const item = value as Partial<BoardItemSavePayload>;
-  const itemId = sanitizeText(item.id, 80) || crypto.randomUUID();
+  const itemId = sanitizeText(item.id, 80) || createId();
   const incomingSnapshot = item.gameSnapshot && typeof item.gameSnapshot === "object" ? item.gameSnapshot : undefined;
   const bggId = sanitizeText(item.bggId ?? incomingSnapshot?.bggId, 32);
 
@@ -173,7 +174,7 @@ function sanitizeAnnotation(value: unknown, existingById: Map<string, BoardAnnot
   }
 
   const annotation = value as Partial<BoardAnnotation>;
-  const annotationId = sanitizeText(annotation.id, 80) || crypto.randomUUID();
+  const annotationId = sanitizeText(annotation.id, 80) || createId();
   const existingAnnotation = existingById.get(annotationId);
   const kind = sanitizeAnnotationKind(annotation.kind ?? existingAnnotation?.kind);
   const now = new Date().toISOString();

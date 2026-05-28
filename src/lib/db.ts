@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { getDefaultBoardTitle } from "./i18n";
+import { decodeHtmlEntities } from "./html-entities";
 import type {
   BggSearchResult,
   AdminGameDetail,
@@ -11,6 +12,7 @@ import type {
   AdminTermTranslation,
   AdminUser,
   AdminUserSummary,
+  AdminTranslationImportResult,
   Board,
   BoardAnnotation,
   BoardItem,
@@ -326,7 +328,7 @@ function getDb() {
 }
 
 function normalizeSearchText(value: string) {
-  return value.trim().toLowerCase();
+  return decodeHtmlEntities(value).trim().toLowerCase();
 }
 
 function sanitizeBoardTitle(value: string | undefined, locale: Locale) {
@@ -338,7 +340,7 @@ function escapeLike(value: string) {
 }
 
 function getDisplayName(localizedNames: LocalizedText | undefined, canonicalName: string, locale: Locale) {
-  return localizedNames?.[locale] || localizedNames?.en || canonicalName;
+  return decodeHtmlEntities(localizedNames?.[locale] || localizedNames?.en || canonicalName);
 }
 
 function getLocalizedDescription(bggId: string, locale: Locale) {
@@ -1274,7 +1276,7 @@ export function getGameNaming(bggId: string) {
 
 export function applyGameNaming(game: GameSnapshot, locale: Locale): GameSnapshot {
   const naming = getGameNaming(game.bggId);
-  const canonicalName = game.canonicalName || naming.localizedNames.en || game.name;
+  const canonicalName = decodeHtmlEntities(game.canonicalName || naming.localizedNames.en || game.name);
   const localizedNames = {
     ...(game.localizedNames ?? {}),
     ...naming.localizedNames,
@@ -1774,6 +1776,334 @@ export function getAdminAnalytics() {
   };
 }
 
+function formatShanghaiDate(value = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  return formatter.format(value);
+}
+
+function decodeBasicHtml(value: unknown) {
+  return decodeHtmlEntities(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeMarkdownCell(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("|", "\\|")
+    .replaceAll("\r\n", "<br>")
+    .replaceAll("\n", "<br>")
+    .trim();
+}
+
+function unescapeMarkdownCell(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("<br>", "\n")
+    .replaceAll("\\|", "|")
+    .trim();
+}
+
+function markdownTable(headers: string[], rows: unknown[][]) {
+  const header = `| ${headers.map(escapeMarkdownCell).join(" | ")} |`;
+  const separator = `| ${headers.map(() => "---").join(" | ")} |`;
+  const body = rows.map((row) => `| ${row.map(escapeMarkdownCell).join(" | ")} |`);
+
+  return [header, separator, ...body].join("\n");
+}
+
+function addTranslationTerm(termMap: Map<string, Set<string>>, terms: unknown, gameName: string) {
+  if (!Array.isArray(terms)) {
+    return;
+  }
+
+  for (const term of terms) {
+    const cleanTerm = String(term ?? "").trim();
+
+    if (!cleanTerm) {
+      continue;
+    }
+
+    const refs = termMap.get(cleanTerm) ?? new Set<string>();
+    refs.add(gameName);
+    termMap.set(cleanTerm, refs);
+  }
+}
+
+function parseTranslationSnapshot(value: string) {
+  try {
+    return JSON.parse(value) as Partial<GameSnapshot>;
+  } catch {
+    return {};
+  }
+}
+
+function getExistingTermTranslationMap(termType: "category" | "mechanic") {
+  const rows = getDb()
+    .prepare("SELECT term, translation FROM game_term_localizations WHERE term_type = ? AND locale = 'zh-CN'")
+    .all(termType) as Array<{ term: string; translation: string }>;
+
+  return Object.fromEntries(rows.map((row) => [row.term, row.translation]));
+}
+
+function splitMarkdownRow(line: string) {
+  const trimmed = line.trim();
+
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) {
+    return null;
+  }
+
+  const cells: string[] = [];
+  let current = "";
+
+  for (let index = 1; index < trimmed.length - 1; index += 1) {
+    const char = trimmed[index];
+    const next = trimmed[index + 1];
+
+    if (char === "\\" && next === "|") {
+      current += "|";
+      index += 1;
+      continue;
+    }
+
+    if (char === "|") {
+      cells.push(unescapeMarkdownCell(current));
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(unescapeMarkdownCell(current));
+  return cells;
+}
+
+function getMarkdownSection(text: string, heading: string) {
+  const headingText = `## ${heading}`;
+  const start = text.indexOf(headingText);
+
+  if (start === -1) {
+    return "";
+  }
+
+  const nextHeading = text.indexOf("\n## ", start + headingText.length);
+  return text.slice(start, nextHeading === -1 ? text.length : nextHeading);
+}
+
+function parseMarkdownTable(text: string, heading: string) {
+  const rows = getMarkdownSection(text, heading)
+    .split(/\r?\n/)
+    .map(splitMarkdownRow)
+    .filter((row): row is string[] => Boolean(row));
+
+  if (rows.length < 2) {
+    return [];
+  }
+
+  const headers = rows[0];
+  return rows.slice(2).map((cells) =>
+    Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]))
+  ) as Array<Record<string, string>>;
+}
+
+export function buildAdminPendingTranslationMarkdown() {
+  const generatedDate = formatShanghaiDate();
+  const categoryTranslations = getExistingTermTranslationMap("category");
+  const mechanicTranslations = getExistingTermTranslationMap("mechanic");
+  const categories = new Map<string, Set<string>>();
+  const mechanics = new Map<string, Set<string>>();
+  const rows = getDb()
+    .prepare(
+      `SELECT
+        games.bgg_id,
+        games.name,
+        games.year_published,
+        games.payload_json,
+        games.updated_at,
+        zh.name AS zh_name,
+        zh_description.description AS zh_description,
+        COUNT(board_items.id) AS board_item_count
+      FROM games
+      LEFT JOIN game_localizations zh ON zh.bgg_id = games.bgg_id AND zh.locale = 'zh-CN'
+      LEFT JOIN game_content_localizations zh_description ON zh_description.bgg_id = games.bgg_id AND zh_description.locale = 'zh-CN'
+      LEFT JOIN board_items ON board_items.bgg_id = games.bgg_id
+      GROUP BY games.bgg_id
+      ORDER BY
+        board_item_count DESC,
+        games.updated_at DESC,
+        games.name ASC`
+    )
+    .all() as Array<{
+    bgg_id: string;
+    name: string;
+    year_published?: number | null;
+    payload_json: string;
+    zh_name?: string | null;
+    zh_description?: string | null;
+    board_item_count: number;
+  }>;
+  const games = rows.map((row) => {
+    const snapshot = parseTranslationSnapshot(row.payload_json);
+    const englishName = snapshot.canonicalName || snapshot.name || row.name;
+    const year = row.year_published ?? snapshot.yearPublished ?? "";
+    const gameNameWithYear = year ? `${englishName} (${year})` : englishName;
+
+    addTranslationTerm(categories, snapshot.categories, gameNameWithYear);
+    addTranslationTerm(mechanics, snapshot.mechanics, gameNameWithYear);
+
+    return {
+      bggId: row.bgg_id,
+      englishName,
+      year,
+      zhName: row.zh_name ?? "",
+      description: decodeBasicHtml(snapshot.description),
+      zhDescription: row.zh_description ?? ""
+    };
+  });
+  const nameRows = games
+    .filter((game) => !game.zhName)
+    .map((game) => [game.bggId, game.englishName, game.year, game.zhName, "", ""]);
+  const categoryRows = Array.from(categories.entries())
+    .filter(([term]) => !categoryTranslations[term])
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([term, refs]) => [term, "", Array.from(refs).slice(0, 5).join("; ")]);
+  const mechanicRows = Array.from(mechanics.entries())
+    .filter(([term]) => !mechanicTranslations[term])
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([term, refs]) => [term, "", Array.from(refs).slice(0, 5).join("; ")]);
+  const descriptionRows = games
+    .filter((game) => game.description && !game.zhDescription)
+    .map((game) => [game.bggId, game.englishName, game.description, ""]);
+
+  return {
+    filename: `bgg-translation-pending-${generatedDate}.md`,
+    markdown: `# BGWB 桌游汉化清单 ${generatedDate}
+
+> 来源：本地 SQLite \`games\` 表和本地化维护表；本次导出不请求 BGG。
+> 本文件只包含当前库内尚未维护中文内容的新增待翻译项。设计师保留原名，不列入翻译范围。分类和机制按英文术语去重，回填时会按术语统一录入。
+
+## 游戏名
+
+${markdownTable(["BGG ID", "英文名", "年份", "现有中文名", "中文名（填写/修订）", "备注"], nameRows)}
+
+## 分类术语
+
+${markdownTable(["英文分类", "中文分类", "出现于"], categoryRows)}
+
+## 机制术语
+
+${markdownTable(["英文机制", "中文机制", "出现于"], mechanicRows)}
+
+## 简介
+
+${markdownTable(["BGG ID", "英文名", "英文简介", "中文简介"], descriptionRows)}
+`,
+    counts: {
+      names: nameRows.length,
+      categories: categoryRows.length,
+      mechanics: mechanicRows.length,
+      descriptions: descriptionRows.length
+    }
+  };
+}
+
+export function importAdminTranslationMarkdown(markdown: string): AdminTranslationImportResult {
+  const now = new Date().toISOString();
+  const gameRows = parseMarkdownTable(markdown, "游戏名");
+  const categoryRows = parseMarkdownTable(markdown, "分类术语");
+  const mechanicRows = parseMarkdownTable(markdown, "机制术语");
+  const descriptionRows = parseMarkdownTable(markdown, "简介");
+  const db = getDb();
+  const upsertName = db.prepare(
+    `INSERT INTO game_localizations (bgg_id, locale, name, name_search, source, updated_at)
+    VALUES (?, 'zh-CN', ?, ?, 'manual', ?)
+    ON CONFLICT(bgg_id, locale) DO UPDATE SET
+      name = excluded.name,
+      name_search = excluded.name_search,
+      source = excluded.source,
+      updated_at = excluded.updated_at`
+  );
+  const upsertTerm = db.prepare(
+    `INSERT INTO game_term_localizations (term_type, locale, term, translation, source, updated_at)
+    VALUES (?, 'zh-CN', ?, ?, 'manual', ?)
+    ON CONFLICT(term_type, locale, term) DO UPDATE SET
+      translation = excluded.translation,
+      source = excluded.source,
+      updated_at = excluded.updated_at`
+  );
+  const upsertDescription = db.prepare(
+    `INSERT INTO game_content_localizations (bgg_id, locale, description, source, updated_at)
+    VALUES (?, 'zh-CN', ?, 'manual', ?)
+    ON CONFLICT(bgg_id, locale) DO UPDATE SET
+      description = excluded.description,
+      source = excluded.source,
+      updated_at = excluded.updated_at`
+  );
+  const findGame = db.prepare("SELECT 1 FROM games WHERE bgg_id = ?");
+  const result: AdminTranslationImportResult = {
+    names: 0,
+    categories: 0,
+    mechanics: 0,
+    descriptions: 0
+  };
+
+  db.exec("BEGIN");
+
+  try {
+    for (const row of gameRows) {
+      const bggId = row["BGG ID"]?.trim() ?? "";
+      const zhName = row["中文名（填写/修订）"]?.trim().slice(0, 160) ?? "";
+
+      if (/^\d+$/.test(bggId) && zhName && findGame.get(bggId)) {
+        upsertName.run(bggId, zhName, normalizeSearchText(zhName), now);
+        result.names += 1;
+      }
+    }
+
+    for (const row of categoryRows) {
+      const term = row["英文分类"]?.trim() ?? "";
+      const translation = row["中文分类"]?.trim().slice(0, 120) ?? "";
+
+      if (term && translation) {
+        upsertTerm.run("category", term, translation, now);
+        result.categories += 1;
+      }
+    }
+
+    for (const row of mechanicRows) {
+      const term = row["英文机制"]?.trim() ?? "";
+      const translation = row["中文机制"]?.trim().slice(0, 120) ?? "";
+
+      if (term && translation) {
+        upsertTerm.run("mechanic", term, translation, now);
+        result.mechanics += 1;
+      }
+    }
+
+    for (const row of descriptionRows) {
+      const bggId = row["BGG ID"]?.trim() ?? "";
+      const description = row["中文简介"]?.trim().slice(0, 20000) ?? "";
+
+      if (/^\d+$/.test(bggId) && description && findGame.get(bggId)) {
+        upsertDescription.run(bggId, description, now);
+        result.descriptions += 1;
+      }
+    }
+
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return result;
+}
+
 export function upsertGameSnapshot(game: GameSnapshot) {
   const now = new Date().toISOString();
   const db = getDb();
@@ -1849,15 +2179,18 @@ function buildSearchResult({
   rank?: number | null;
   averageRating?: number | null;
 }): BggSearchResult {
-  const displayName = localizedName || canonicalName;
+  const decodedCanonicalName = decodeHtmlEntities(canonicalName);
+  const decodedLocalizedName = localizedName ? decodeHtmlEntities(localizedName) : undefined;
+  const decodedMatchedAlias = matchedAlias ? decodeHtmlEntities(matchedAlias) : undefined;
+  const displayName = decodedLocalizedName || decodedCanonicalName;
 
   return {
     bggId,
     name: displayName,
     displayName,
-    canonicalName,
-    localizedName,
-    matchedAlias,
+    canonicalName: decodedCanonicalName,
+    localizedName: decodedLocalizedName,
+    matchedAlias: decodedMatchedAlias,
     locale,
     yearPublished: yearPublished ?? undefined,
     rank: rank ?? undefined,

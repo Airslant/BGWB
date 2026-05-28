@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
+import { withBasePath } from "@/lib/base-path";
+
 import { BggAttribution } from "./bgg-branding";
+import { BrandHeroImage } from "./brand-hero-image";
 import { LanguageSelect, useLocale } from "./use-locale";
 
 export function PasswordResetClient() {
@@ -38,7 +41,7 @@ export function PasswordResetClient() {
     setIsSendingCode(true);
 
     try {
-      const response = await fetch("/api/auth/password-reset/code", {
+      const response = await fetch(withBasePath("/api/auth/password-reset/code"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -67,7 +70,7 @@ export function PasswordResetClient() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/auth/password-reset/confirm", {
+      const response = await fetch(withBasePath("/api/auth/password-reset/confirm"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -91,6 +94,7 @@ export function PasswordResetClient() {
 
   return (
     <main className="auth-shell">
+      <BrandHeroImage />
       <section className="auth-panel" aria-labelledby="reset-title">
         <LanguageSelect label={t.language} locale={locale} onChange={setLocale} />
         <h1 id="reset-title">{t.forgotPasswordTitle}</h1>

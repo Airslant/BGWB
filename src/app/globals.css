@@ -169,14 +169,23 @@ a {
   z-index: 0;
 }
 
-.brand-hero-image {
-  height: 100%;
+.brand-hero-picture {
+  display: block;
   inset: 0;
+  overflow: hidden;
+  position: absolute;
+}
+
+.home-shell .brand-hero-picture {
+  z-index: -1;
+}
+
+.brand-hero-image {
+  display: block;
+  height: 100%;
   object-fit: cover;
   object-position: center;
-  position: absolute;
   width: 100%;
-  z-index: -1;
 }
 
 .home-panel,
@@ -302,13 +311,12 @@ a {
 }
 
 .auth-shell::before {
-  background:
-    linear-gradient(90deg, rgba(247, 243, 234, 0.92), rgba(247, 243, 234, 0.72)),
-    url("/assets/brand/bgwb-collection-wall.png") center / cover;
+  background: linear-gradient(90deg, rgba(247, 243, 234, 0.92), rgba(247, 243, 234, 0.72));
   content: "";
   filter: saturate(0.92);
   inset: 0;
   position: absolute;
+  z-index: 1;
 }
 
 .auth-shell::after {
@@ -318,6 +326,12 @@ a {
   content: "";
   inset: 0;
   position: absolute;
+  z-index: 1;
+}
+
+.auth-shell .brand-hero-picture {
+  filter: saturate(0.92);
+  z-index: 0;
 }
 
 .auth-panel {
@@ -330,8 +344,12 @@ a {
   max-width: 440px;
   padding: 30px;
   position: relative;
-  z-index: 1;
+  z-index: 2;
   width: 100%;
+}
+
+.auth-shell .bgg-credit {
+  z-index: 2;
 }
 
 .auth-panel h1,
@@ -582,6 +600,16 @@ a {
   display: grid;
   gap: 10px;
   text-decoration: none;
+}
+
+.admin-feature-card input[type="file"] {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  min-height: 42px;
+  padding: 9px 11px;
+  width: 100%;
 }
 
 .admin-filter-bar {

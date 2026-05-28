@@ -3,7 +3,10 @@
 import {
   BarChart3,
   CheckCircle2,
+  FileDown,
+  FileUp,
   Gamepad2,
+  Languages,
   Loader2,
   RefreshCcw,
   Search,
@@ -15,10 +18,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 
+import { withBasePath } from "@/lib/base-path";
 import type {
   AdminGameDetail,
   AdminGameSummary,
   AdminTermTranslation,
+  AdminTranslationImportResult,
   AdminUser,
   AdminUserSummary
 } from "@/lib/types";
@@ -66,7 +71,7 @@ function AdminFrame({ children, subtitle, title }: { children: ReactNode; subtit
 
     async function loadAdmin() {
       try {
-        const response = await fetch("/api/admin/me");
+        const response = await fetch(withBasePath("/api/admin/me"));
         const payload = (await response.json()) as { admin?: AdminUser; error?: string };
 
         if (!response.ok || !payload.admin) {
@@ -129,6 +134,10 @@ function AdminFrame({ children, subtitle, title }: { children: ReactNode; subtit
             <Gamepad2 size={17} />
             桌游信息
           </Link>
+          <Link href="/admin/translations">
+            <Languages size={17} />
+            汉化导入导出
+          </Link>
           <Link href="/admin/analytics">
             <BarChart3 size={17} />
             数据分析
@@ -169,12 +178,101 @@ export function AdminHomeClient() {
           <h2>桌游信息管理</h2>
           <p>维护中英文名、别名、中文简介和术语翻译。</p>
         </Link>
+        <Link className="admin-feature-card" href="/admin/translations">
+          <Languages size={22} />
+          <h2>汉化导入导出</h2>
+          <p>导出新增待翻译内容，上传翻译后的 Markdown 自动回填。</p>
+        </Link>
         <Link className="admin-feature-card" href="/admin/analytics">
           <BarChart3 size={22} />
           <h2>数据分析</h2>
           <p>查看用户、白板、桌游资料和汉化覆盖的汇总趋势。</p>
         </Link>
       </section>
+    </AdminFrame>
+  );
+}
+
+export function AdminTranslationsClient() {
+  const [file, setFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [result, setResult] = useState<AdminTranslationImportResult | null>(null);
+
+  async function importTranslations(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!file) {
+      setError("请先选择一个 Markdown 文件。");
+      return;
+    }
+
+    setIsImporting(true);
+    setError("");
+    setNotice("");
+    setResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch(withBasePath("/api/admin/translations/import"), {
+        method: "POST",
+        body: formData
+      });
+      const payload = (await response.json()) as { result?: AdminTranslationImportResult; error?: string };
+
+      if (!response.ok || !payload.result) {
+        throw new Error(payload.error ?? "导入失败");
+      }
+
+      setResult(payload.result);
+      setNotice("翻译内容已导入");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "导入失败");
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  return (
+    <AdminFrame title="汉化导入导出" subtitle="按 BGWB Markdown 表格格式维护新增待翻译内容。">
+      <section className="admin-card-grid">
+        <div className="admin-feature-card">
+          <FileDown size={22} />
+          <h2>导出待翻译内容</h2>
+          <p>下载当前库内尚未维护中文名、中文简介、分类和机制翻译的新增内容。</p>
+          <a className="button primary" href={withBasePath("/api/admin/translations/export")} download>
+            <FileDown size={17} />
+            下载 Markdown
+          </a>
+        </div>
+        <form className="admin-feature-card" onSubmit={importTranslations}>
+          <FileUp size={22} />
+          <h2>导入已翻译内容</h2>
+          <p>上传翻译后的 Markdown，系统会把非空翻译结果写入本地桌游数据库。</p>
+          <input
+            accept=".md,text/markdown,text/plain"
+            type="file"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+          <button className="button primary" disabled={isImporting} type="submit">
+            {isImporting ? <Loader2 className="spin" size={17} /> : <FileUp size={17} />}
+            导入 Markdown
+          </button>
+        </form>
+      </section>
+      {error ? <p className="error-text">{error}</p> : null}
+      {notice ? <p className="success-text">{notice}</p> : null}
+      {result ? (
+        <section className="admin-metric-grid">
+          <MetricCard label="中文名" value={result.names} />
+          <MetricCard label="分类术语" value={result.categories} />
+          <MetricCard label="机制术语" value={result.mechanics} />
+          <MetricCard label="中文简介" value={result.descriptions} />
+        </section>
+      ) : null}
     </AdminFrame>
   );
 }
@@ -193,7 +291,7 @@ export function AdminUsersClient() {
 
     try {
       const params = new URLSearchParams({ q: nextQuery, status: nextStatus });
-      const response = await fetch(`/api/admin/users?${params.toString()}`);
+      const response = await fetch(withBasePath(`/api/admin/users?${params.toString()}`));
       const payload = (await response.json()) as AdminListResponse<{ users?: AdminUserSummary[]; error?: string }>;
 
       if (!response.ok) {
@@ -229,7 +327,7 @@ export function AdminUsersClient() {
 
     const reason = promptedReason ?? "";
 
-    const response = await fetch(`/api/admin/users/${user.id}`, {
+    const response = await fetch(withBasePath(`/api/admin/users/${user.id}`), {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json"
@@ -328,7 +426,7 @@ export function AdminGamesClient() {
 
     try {
       const params = new URLSearchParams({ q: nextQuery });
-      const response = await fetch(`/api/admin/games?${params.toString()}`);
+      const response = await fetch(withBasePath(`/api/admin/games?${params.toString()}`));
       const payload = (await response.json()) as AdminListResponse<{ games?: AdminGameSummary[]; error?: string }>;
 
       if (!response.ok) {
@@ -466,7 +564,7 @@ export function AdminGameDetailClient({ bggId }: { bggId: string }) {
     setError("");
 
     try {
-      const response = await fetch(`/api/admin/games/${bggId}`);
+      const response = await fetch(withBasePath(`/api/admin/games/${bggId}`));
       const payload = (await response.json()) as { game?: AdminGameDetail; error?: string };
 
       if (!response.ok || !payload.game) {
@@ -493,7 +591,7 @@ export function AdminGameDetailClient({ bggId }: { bggId: string }) {
     setNotice("");
 
     try {
-      const response = await fetch(`/api/admin/games/${bggId}`, {
+      const response = await fetch(withBasePath(`/api/admin/games/${bggId}`), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json"
@@ -533,7 +631,7 @@ export function AdminGameDetailClient({ bggId }: { bggId: string }) {
     setNotice("");
 
     try {
-      const response = await fetch(`/api/admin/games/${bggId}/refresh?locale=zh-CN`, { method: "POST" });
+      const response = await fetch(withBasePath(`/api/admin/games/${bggId}/refresh?locale=zh-CN`), { method: "POST" });
       const payload = (await response.json()) as { game?: AdminGameDetail; error?: string };
 
       if (!response.ok || !payload.game) {
@@ -668,7 +766,7 @@ export function AdminAnalyticsClient() {
 
     async function loadAnalytics() {
       try {
-        const response = await fetch("/api/admin/analytics");
+        const response = await fetch(withBasePath("/api/admin/analytics"));
         const payload = (await response.json()) as AnalyticsResponse & { error?: string };
 
         if (!response.ok) {

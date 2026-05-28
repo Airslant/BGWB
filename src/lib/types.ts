@@ -7,6 +7,7 @@ export const BOARD_ANNOTATION_COLORS = ["ink", "moss", "brick", "navy", "amber",
 export const BOARD_ANNOTATION_LINE_WIDTHS = [1, 2, 4] as const;
 export const BOARD_ANNOTATION_FONT_SIZES = [14, 18, 24] as const;
 export const EMAIL_CODE_PURPOSES = ["register", "reset_password"] as const;
+export const BGG_THING_TYPES = ["boardgame", "boardgameexpansion"] as const;
 
 export type BoardStatus = (typeof BOARD_STATUSES)[number];
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
@@ -17,6 +18,7 @@ export type BoardAnnotationColor = (typeof BOARD_ANNOTATION_COLORS)[number];
 export type BoardAnnotationLineWidth = (typeof BOARD_ANNOTATION_LINE_WIDTHS)[number];
 export type BoardAnnotationFontSize = (typeof BOARD_ANNOTATION_FONT_SIZES)[number];
 export type EmailCodePurpose = (typeof EMAIL_CODE_PURPOSES)[number];
+export type BggThingType = (typeof BGG_THING_TYPES)[number];
 
 export type LocalizedText = Partial<Record<Locale, string>>;
 export type LocalizedTextList = Partial<Record<Locale, string[]>>;
@@ -30,6 +32,7 @@ export type Viewport = {
 
 export type BggSearchResult = {
   bggId: string;
+  thingType?: BggThingType;
   name: string;
   displayName?: string;
   canonicalName?: string;
@@ -44,6 +47,7 @@ export type BggSearchResult = {
 
 export type GameSnapshot = {
   bggId: string;
+  thingType?: BggThingType;
   name: string;
   displayName?: string;
   canonicalName?: string;
@@ -156,6 +160,13 @@ export type AdminGameDetail = AdminGameSummary & {
   zhDescription: string;
   categoryTranslations: AdminTermTranslation[];
   mechanicTranslations: AdminTermTranslation[];
+};
+
+export type AdminTranslationImportResult = {
+  names: number;
+  categories: number;
+  mechanics: number;
+  descriptions: number;
 };
 
 export type BoardSummary = {

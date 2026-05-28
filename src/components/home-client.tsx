@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { withBasePath } from "@/lib/base-path";
+
 import { BggAttribution } from "./bgg-branding";
+import { BrandHeroImage } from "./brand-hero-image";
 import { LanguageSelect, useLocale } from "./use-locale";
 
 export function HomeClient() {
@@ -18,7 +21,7 @@ export function HomeClient() {
 
     async function checkSession() {
       try {
-        const response = await fetch("/api/auth/me");
+        const response = await fetch(withBasePath("/api/auth/me"));
         const payload = (await response.json()) as { user?: unknown };
 
         if (!cancelled && payload.user) {
@@ -41,7 +44,7 @@ export function HomeClient() {
 
   return (
     <main className="home-shell">
-      <img alt="" aria-hidden="true" className="brand-hero-image" draggable={false} src="/assets/brand/bgwb-collection-wall.png" />
+      <BrandHeroImage priority />
       <section className="home-panel" aria-labelledby="home-title">
         <div className="home-topline">
           <LanguageSelect label={t.language} locale={locale} onChange={setLocale} />
