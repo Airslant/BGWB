@@ -49,13 +49,16 @@ export function BoardsClient() {
       setUser(me.user);
 
       const boardsResponse = await fetch(withBasePath("/api/boards"));
-      const payload = (await boardsResponse.json()) as { boards?: BoardSummary[]; error?: string };
+      const payload = (await boardsResponse.json()) as { boards?: BoardSummary[]; maxBoards?: number; error?: string };
 
       if (!boardsResponse.ok) {
         throw new Error(payload.error ?? t.loadBoardsFailed);
       }
 
       setBoards(payload.boards ?? []);
+      if (typeof payload.maxBoards === "number") {
+        setUser((currentUser) => (currentUser ? { ...currentUser, maxBoards: payload.maxBoards ?? currentUser.maxBoards } : currentUser));
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : t.loadBoardsFailed);
     } finally {
@@ -69,6 +72,11 @@ export function BoardsClient() {
   }, []);
 
   function openCreateDialog() {
+    if (user && boards.length >= user.maxBoards) {
+      setError(t.boardLimitReached.replace("{limit}", String(user.maxBoards)));
+      return;
+    }
+
     setError("");
     setBoardName("");
     setNameDialog({ mode: "create" });
@@ -333,12 +341,24 @@ export function BoardsClient() {
             <LogOut size={18} />
             {t.logout}
           </button>
-          <button className="button primary" type="button" onClick={openCreateDialog}>
+          <button
+            className="button primary"
+            disabled={Boolean(user && boards.length >= user.maxBoards)}
+            type="button"
+            title={user && boards.length >= user.maxBoards ? t.boardLimitReached.replace("{limit}", String(user.maxBoards)) : t.createBoard}
+            onClick={openCreateDialog}
+          >
             <Plus size={18} />
             {t.createBoard}
           </button>
         </div>
       </header>
+
+      {user ? (
+        <p className="boards-limit-hint">
+          {t.boardLimitUsage.replace("{count}", String(boards.length)).replace("{limit}", String(user.maxBoards))}
+        </p>
+      ) : null}
 
       {error ? <p className="error-text">{error}</p> : null}
 
@@ -370,7 +390,12 @@ export function BoardsClient() {
         {boards.length === 0 ? (
           <div className="boards-empty">
             <h2>{t.noBoards}</h2>
-            <button className="button primary" type="button" onClick={openCreateDialog}>
+            <button
+              className="button primary"
+              disabled={Boolean(user && boards.length >= user.maxBoards)}
+              type="button"
+              onClick={openCreateDialog}
+            >
               <Plus size={18} />
               {t.createBoard}
             </button>

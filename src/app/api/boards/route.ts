@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
-import { createBoard, listBoards } from "@/lib/db";
+import { BoardLimitError, createBoard, listBoards } from "@/lib/db";
 import { normalizeLocale } from "@/lib/i18n";
 import { assertSameOriginRequest } from "@/lib/request-security";
 
@@ -14,7 +14,7 @@ export async function GET() {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
-  return NextResponse.json({ boards: listBoards(user.id) });
+  return NextResponse.json({ boards: listBoards(user.id), maxBoards: user.maxBoards });
 }
 
 export async function POST(request: Request) {
@@ -49,6 +49,10 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
+    if (error instanceof BoardLimitError) {
+      return NextResponse.json({ error: `白板数量已达上限（${error.maxBoards} 个）。` }, { status: 403 });
+    }
+
     console.error(error);
     return NextResponse.json({ error: "创建白板失败，请稍后再试。" }, { status: 500 });
   }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentAdminUser } from "@/lib/auth";
-import { getUserById, setUserDisabled } from "@/lib/db";
+import { getUserById, setUserDisabled, updateUserMaxBoards } from "@/lib/db";
 import { assertSameOriginRequest } from "@/lib/request-security";
 
 export const runtime = "nodejs";
@@ -35,7 +35,19 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "没有找到这个用户。" }, { status: 404 });
   }
 
-  const payload = (await request.json().catch(() => ({}))) as { disabled?: unknown; reason?: unknown };
+  const payload = (await request.json().catch(() => ({}))) as { disabled?: unknown; reason?: unknown; maxBoards?: unknown };
+
+  if (payload.maxBoards !== undefined) {
+    const maxBoards = Number(payload.maxBoards);
+
+    if (!Number.isInteger(maxBoards) || maxBoards < 0 || maxBoards > 500) {
+      return NextResponse.json({ error: "白板上限需要是 0-500 之间的整数。" }, { status: 400 });
+    }
+
+    const updatedUser = updateUserMaxBoards(userId, maxBoards);
+    return NextResponse.json({ user: updatedUser });
+  }
+
   const disabled = Boolean(payload.disabled);
 
   if (disabled && target.id === admin.id) {

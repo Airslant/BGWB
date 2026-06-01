@@ -3,7 +3,11 @@
 import {
   ArrowLeft,
   ArrowRight,
+  Grid2X2,
   ImageOff,
+  Keyboard,
+  LayoutTemplate,
+  ListOrdered,
   Loader2,
   Check,
   Minus,
@@ -15,13 +19,14 @@ import {
   Share2,
   Square,
   StickyNote,
+  Table2,
   Trash2,
   Type,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
 import Link from "next/link";
-import { type CSSProperties, MouseEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, MouseEvent, PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { withBasePath } from "@/lib/base-path";
 import { createId } from "@/lib/id";
@@ -53,20 +58,42 @@ import { BggAttribution, BggIcon, getBggGameUrl } from "./bgg-branding";
 const CARD_WIDTH = 176;
 const DEFAULT_COVER_RATIO = 0.72;
 const A4_COVER_RATIO = 1 / 1.414;
+const TOPN_DEFAULT_COUNT = 10;
+const TOPN_DEFAULT_COLUMNS = 5;
+const TOPN_MAX_COUNT = 100;
+const TOPN_MAX_COLUMNS = 20;
+const TOPN_MAX_ROWS = 100;
+const TOPN_CELL_WIDTH = CARD_WIDTH + 48;
+const TOPN_CELL_HEIGHT = Math.round(CARD_WIDTH / DEFAULT_COVER_RATIO + 76);
+const TABLE_DEFAULT_ROWS = 4;
+const TABLE_DEFAULT_COLUMNS = 4;
+const TABLE_MAX_ROWS = 20;
+const TABLE_MAX_COLUMNS = 20;
+const TABLE_CELL_WIDTH = TOPN_CELL_WIDTH;
+const TABLE_CELL_HEIGHT = TOPN_CELL_HEIGHT;
+const TEXT_LAYER_PRIORITY = 1;
+const GAME_CARD_LAYER_PRIORITY = 2;
+const COMPONENT_LAYER_PRIORITY = 3;
+const LAYER_Z_INDEX_STEP = 10000;
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
 const CONTEXT_MENU_WIDTH = 224;
 const CONTEXT_MENU_HEIGHT = 188;
 const AUTOSAVE_DEBOUNCE_MS = 1200;
 const MIN_ANNOTATION_SIZE = 36;
+const MIN_HOT_TO_LAME_WIDTH = 280;
 const SNAP_THRESHOLD_PX = 8;
-const STYLEBAR_ESTIMATED_WIDTH = 520;
+const STYLEBAR_ESTIMATED_WIDTH = 900;
 const DEFAULT_ANNOTATION_SIZE: Record<BoardAnnotationKind, { width: number; height: number }> = {
   text: { width: 220, height: 72 },
   sticky: { width: 220, height: 140 },
   section: { width: 440, height: 240 },
   rectangle: { width: 240, height: 150 },
   line: { width: 180, height: 0 },
-  arrow: { width: 180, height: 0 }
+  arrow: { width: 180, height: 0 },
+  quadrant: { width: 560, height: 380 },
+  hotToLame: { width: 760, height: 460 },
+  topN: { width: TOPN_DEFAULT_COLUMNS * TOPN_CELL_WIDTH, height: Math.ceil(TOPN_DEFAULT_COUNT / TOPN_DEFAULT_COLUMNS) * TOPN_CELL_HEIGHT },
+  table: { width: TABLE_DEFAULT_COLUMNS * TABLE_CELL_WIDTH, height: TABLE_DEFAULT_ROWS * TABLE_CELL_HEIGHT }
 };
 const ANNOTATION_COLOR_THEME: Record<BoardAnnotationColor, { label: string; stroke: string; fill: string }> = {
   ink: { label: "Ink", stroke: "#1a1815", fill: "26, 24, 21" },
@@ -108,6 +135,12 @@ type DragState =
       startHeight: number;
     }
   | {
+      type: "annotation-width-extend";
+      annotationId: string;
+      startWorldX: number;
+      startWidth: number;
+    }
+  | {
       type: "annotation-line-end";
       annotationId: string;
       endpoint: "start" | "end";
@@ -133,10 +166,62 @@ type ContextMenuState = {
   x: number;
   y: number;
 };
-type CanvasTool = "select" | BoardAnnotationKind;
+type QuadrantText = {
+  topLeft: string;
+  topRight: string;
+  bottomLeft: string;
+  bottomRight: string;
+};
+type TopNConfig = {
+  count: number;
+  order: "ascending" | "descending";
+  rows: number;
+  columns: number;
+};
+type TableConfig = {
+  rows: number;
+  columns: number;
+};
+type TemplateTool = "template-sticky" | "template-hot-to-lame" | "template-quadrant" | "template-top-n" | "template-table";
+type DirectAnnotationTool = Exclude<BoardAnnotationKind, "sticky" | "quadrant" | "hotToLame" | "topN" | "table">;
+type CanvasTool = "select" | DirectAnnotationTool | TemplateTool;
+type ShortcutToolAction = CanvasTool | "addGame" | "templateMenu";
+type StageSize = { width: number; height: number };
+type WorldRect = { x: number; y: number; width: number; height: number };
 type SnapGuide =
   | { orientation: "vertical"; position: number; start: number; end: number }
   | { orientation: "horizontal"; position: number; start: number; end: number };
+
+const TOOL_SHORTCUTS: Record<CanvasTool, string> = {
+  select: "V",
+  text: "T",
+  section: "S",
+  rectangle: "R",
+  line: "L",
+  arrow: "A",
+  "template-sticky": "N",
+  "template-hot-to-lame": "H",
+  "template-quadrant": "Q",
+  "template-top-n": "O",
+  "template-table": "G"
+};
+const TEMPLATE_MENU_SHORTCUT = "M";
+const ADD_GAME_SHORTCUT = "B";
+const TOOL_ACTION_BY_SHORTCUT: Record<string, ShortcutToolAction> = {
+  v: "select",
+  b: "addGame",
+  t: "text",
+  s: "section",
+  r: "rectangle",
+  l: "line",
+  a: "arrow",
+  m: "templateMenu",
+  n: "template-sticky",
+  h: "template-hot-to-lame",
+  q: "template-quadrant",
+  o: "template-top-n",
+  g: "template-table"
+};
 
 type WebKitGestureEvent = Event & {
   clientX: number;
@@ -153,6 +238,24 @@ type CoverRatioState = {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function moveIdsToEnd<T extends { id: string }>(entries: T[], ids: Set<string>) {
+  const movingEntries = entries.filter((entry) => ids.has(entry.id));
+
+  if (movingEntries.length === 0) {
+    return entries;
+  }
+
+  return [...entries.filter((entry) => !ids.has(entry.id)), ...movingEntries];
+}
+
+function getLayerZIndex(priority: number, index: number) {
+  return (COMPONENT_LAYER_PRIORITY + 1 - priority) * LAYER_Z_INDEX_STEP + index;
+}
+
+function getAnnotationLayerPriority(annotation: BoardAnnotation) {
+  return annotation.kind === "text" ? TEXT_LAYER_PRIORITY : COMPONENT_LAYER_PRIORITY;
 }
 
 function formatPlayers(game: GameSnapshot, unit: string) {
@@ -208,13 +311,187 @@ function clearNativeSelection() {
   window.getSelection()?.removeAllRanges();
 }
 
+function createQuadrantText(topLeft: string, topRight: string, bottomLeft: string, bottomRight: string): QuadrantText {
+  return { topLeft, topRight, bottomLeft, bottomRight };
+}
+
+function parseQuadrantText(value: string): QuadrantText {
+  if (!value.trim()) {
+    return createQuadrantText("", "", "", "");
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<QuadrantText>;
+
+    return createQuadrantText(
+      typeof parsed.topLeft === "string" ? parsed.topLeft : "",
+      typeof parsed.topRight === "string" ? parsed.topRight : "",
+      typeof parsed.bottomLeft === "string" ? parsed.bottomLeft : "",
+      typeof parsed.bottomRight === "string" ? parsed.bottomRight : ""
+    );
+  } catch {
+    return createQuadrantText(value, "", "", "");
+  }
+}
+
+function serializeQuadrantText(value: QuadrantText) {
+  return JSON.stringify({
+    topLeft: value.topLeft.slice(0, 220),
+    topRight: value.topRight.slice(0, 220),
+    bottomLeft: value.bottomLeft.slice(0, 220),
+    bottomRight: value.bottomRight.slice(0, 220)
+  });
+}
+
+function normalizeTopNConfig(config: Partial<TopNConfig>): TopNConfig {
+  const countValue = typeof config.count === "number" && Number.isFinite(config.count) ? config.count : TOPN_DEFAULT_COUNT;
+  const columnValue =
+    typeof config.columns === "number" && Number.isFinite(config.columns) ? config.columns : Math.min(countValue, TOPN_DEFAULT_COLUMNS);
+  const count = Math.round(clamp(countValue, 1, TOPN_MAX_COUNT));
+  const order = config.order === "descending" ? "descending" : "ascending";
+  const columns = Math.round(clamp(columnValue, 1, TOPN_MAX_COLUMNS));
+  const rowValue =
+    typeof config.rows === "number" && Number.isFinite(config.rows) ? config.rows : Math.ceil(count / Math.max(columns, 1));
+  const rows = Math.round(clamp(rowValue, 1, TOPN_MAX_ROWS));
+
+  if (rows * columns >= count) {
+    return { count, order, rows, columns };
+  }
+
+  return { count, order, rows: Math.min(TOPN_MAX_ROWS, Math.ceil(count / columns)), columns };
+}
+
+function parseTopNConfig(value: string): TopNConfig {
+  if (!value.trim()) {
+    return normalizeTopNConfig({});
+  }
+
+  try {
+    return normalizeTopNConfig(JSON.parse(value) as Partial<TopNConfig>);
+  } catch {
+    return normalizeTopNConfig({});
+  }
+}
+
+function serializeTopNConfig(value: Partial<TopNConfig>) {
+  return JSON.stringify(normalizeTopNConfig(value));
+}
+
+function updateTopNConfig(current: TopNConfig, patch: Partial<TopNConfig>): TopNConfig {
+  const next = { ...current, ...patch };
+
+  if (patch.count !== undefined) {
+    const count = Math.round(clamp(patch.count, 1, TOPN_MAX_COUNT));
+    const columns = Math.round(clamp(current.columns, 1, TOPN_MAX_COLUMNS));
+
+    return normalizeTopNConfig({
+      ...next,
+      count,
+      columns,
+      rows: Math.ceil(count / columns)
+    });
+  }
+
+  if (patch.columns !== undefined) {
+    const columns = Math.round(clamp(patch.columns, 1, TOPN_MAX_COLUMNS));
+
+    return normalizeTopNConfig({
+      ...next,
+      columns,
+      rows: Math.ceil(current.count / columns)
+    });
+  }
+
+  if (patch.rows !== undefined) {
+    const rows = Math.round(clamp(patch.rows, 1, TOPN_MAX_ROWS));
+
+    return normalizeTopNConfig({
+      ...next,
+      rows,
+      columns: Math.ceil(current.count / rows)
+    });
+  }
+
+  return normalizeTopNConfig(next);
+}
+
+function getTopNPreferredSize(config: TopNConfig, previous?: { width: number; height: number; config: TopNConfig }) {
+  const cellWidth = previous ? Math.max(previous.width / previous.config.columns, TOPN_CELL_WIDTH) : TOPN_CELL_WIDTH;
+  const cellHeight = previous ? Math.max(previous.height / previous.config.rows, TOPN_CELL_HEIGHT) : TOPN_CELL_HEIGHT;
+
+  return {
+    width: config.columns * cellWidth,
+    height: config.rows * cellHeight
+  };
+}
+
+function normalizeTableConfig(config: Partial<TableConfig>): TableConfig {
+  const rowValue = typeof config.rows === "number" && Number.isFinite(config.rows) ? config.rows : TABLE_DEFAULT_ROWS;
+  const columnValue = typeof config.columns === "number" && Number.isFinite(config.columns) ? config.columns : TABLE_DEFAULT_COLUMNS;
+
+  return {
+    rows: Math.round(clamp(rowValue, 1, TABLE_MAX_ROWS)),
+    columns: Math.round(clamp(columnValue, 1, TABLE_MAX_COLUMNS))
+  };
+}
+
+function parseTableConfig(value: string): TableConfig {
+  if (!value.trim()) {
+    return normalizeTableConfig({});
+  }
+
+  try {
+    return normalizeTableConfig(JSON.parse(value) as Partial<TableConfig>);
+  } catch {
+    return normalizeTableConfig({});
+  }
+}
+
+function serializeTableConfig(value: Partial<TableConfig>) {
+  return JSON.stringify(normalizeTableConfig(value));
+}
+
+function updateTableConfig(current: TableConfig, patch: Partial<TableConfig>): TableConfig {
+  return normalizeTableConfig({ ...current, ...patch });
+}
+
+function getTablePreferredSize(config: TableConfig, previous?: { width: number; height: number; config: TableConfig }) {
+  const cellWidth = previous ? Math.max(previous.width / previous.config.columns, TABLE_CELL_WIDTH) : TABLE_CELL_WIDTH;
+  const cellHeight = previous ? Math.max(previous.height / previous.config.rows, TABLE_CELL_HEIGHT) : TABLE_CELL_HEIGHT;
+
+  return {
+    width: config.columns * cellWidth,
+    height: config.rows * cellHeight
+  };
+}
+
 function getDefaultAnnotationStyle(kind: BoardAnnotationKind): BoardAnnotationStyle {
   return {
-    color: kind === "sticky" ? "amber" : kind === "section" ? "moss" : "ink",
+    color: kind === "sticky" ? "amber" : kind === "section" ? "moss" : kind === "quadrant" ? "navy" : "ink",
     lineWidth: 2,
-    fontSize: kind === "section" ? 24 : 18,
+    fontSize: kind === "section" || kind === "hotToLame" || kind === "topN" || kind === "table" ? 24 : 18,
     fill: kind === "sticky" || kind === "section",
     fillOpacity: kind === "sticky" ? 0.2 : kind === "section" ? 0.12 : 0
+  };
+}
+
+function createAnnotationFromBase(
+  kind: BoardAnnotationKind,
+  x: number,
+  y: number,
+  overrides: Partial<Omit<BoardAnnotation, "id" | "kind" | "createdAt" | "updatedAt" | "style">> & {
+    style?: Partial<BoardAnnotationStyle>;
+  } = {}
+): BoardAnnotation {
+  const base = createAnnotation(kind, x, y);
+
+  return {
+    ...base,
+    ...overrides,
+    style: {
+      ...base.style,
+      ...(overrides.style ?? {})
+    }
   };
 }
 
@@ -234,6 +511,58 @@ function createAnnotation(kind: BoardAnnotationKind, x: number, y: number): Boar
     createdAt: now,
     updatedAt: now
   };
+}
+
+function createTemplateAnnotations(template: TemplateTool, x: number, y: number, t: UiCopy): BoardAnnotation[] {
+  if (template === "template-sticky") {
+    return [createAnnotation("sticky", x, y)];
+  }
+
+  if (template === "template-hot-to-lame") {
+    return [
+      createAnnotationFromBase("hotToLame", x, y, {
+        width: 760,
+        height: 460,
+        text: "",
+        style: { color: "ink", fill: false, fillOpacity: 0, fontSize: 24, lineWidth: 2 }
+      })
+    ];
+  }
+
+  if (template === "template-quadrant") {
+    return [
+      createAnnotationFromBase("quadrant", x, y, {
+        width: 560,
+        height: 380,
+        text: serializeQuadrantText(createQuadrantText(t.quadrantOne, t.quadrantTwo, t.quadrantThree, t.quadrantFour)),
+        style: { color: "navy", fill: false, fillOpacity: 0, fontSize: 18, lineWidth: 2 }
+      })
+    ];
+  }
+
+  if (template === "template-top-n") {
+    const topNSize = DEFAULT_ANNOTATION_SIZE.topN;
+
+    return [
+      createAnnotationFromBase("topN", x, y, {
+        width: topNSize.width,
+        height: topNSize.height,
+        text: serializeTopNConfig({ count: TOPN_DEFAULT_COUNT, order: "ascending", rows: 2, columns: TOPN_DEFAULT_COLUMNS }),
+        style: { color: "ink", fill: false, fillOpacity: 0, fontSize: 24, lineWidth: 2 }
+      })
+    ];
+  }
+
+  const tableSize = DEFAULT_ANNOTATION_SIZE.table;
+
+  return [
+    createAnnotationFromBase("table", x, y, {
+      width: tableSize.width,
+      height: tableSize.height,
+      text: serializeTableConfig({ rows: TABLE_DEFAULT_ROWS, columns: TABLE_DEFAULT_COLUMNS }),
+      style: { color: "ink", fill: false, fillOpacity: 0, fontSize: 24, lineWidth: 2 }
+    })
+  ];
 }
 
 function isLinearAnnotation(annotation: BoardAnnotation) {
@@ -280,6 +609,18 @@ function getAnnotationGroupBounds(annotations: Array<Pick<BoardAnnotation, "x" |
     centerX: (left + right) / 2,
     centerY: (top + bottom) / 2
   };
+}
+
+function getAnnotationResizeMax(annotation: BoardAnnotation) {
+  if (annotation.kind === "topN" || annotation.kind === "table") {
+    return { width: 12000, height: 12000 };
+  }
+
+  if (annotation.kind === "hotToLame") {
+    return { width: 5000, height: 4000 };
+  }
+
+  return { width: 2200, height: 1600 };
 }
 
 function canAnnotationUseFill(annotation: BoardAnnotation) {
@@ -400,6 +741,58 @@ function getStylebarPosition(
   };
 }
 
+function getItemWorldRect(item: BoardItem): WorldRect {
+  const width = CARD_WIDTH * item.scale;
+  const height = (CARD_WIDTH / DEFAULT_COVER_RATIO + 72) * item.scale;
+
+  return {
+    x: item.x,
+    y: item.y,
+    width,
+    height
+  };
+}
+
+function getAnnotationWorldRect(annotation: BoardAnnotation): WorldRect {
+  const bounds = getAnnotationBounds(annotation);
+
+  return {
+    x: bounds.left,
+    y: bounds.top,
+    width: Math.max(bounds.width, MIN_ANNOTATION_SIZE),
+    height: Math.max(bounds.height, MIN_ANNOTATION_SIZE)
+  };
+}
+
+function getVisibleWorldRect(viewport: Viewport, stageSize: StageSize): WorldRect {
+  return {
+    x: -viewport.x / viewport.scale,
+    y: -viewport.y / viewport.scale,
+    width: stageSize.width / viewport.scale,
+    height: stageSize.height / viewport.scale
+  };
+}
+
+function getMinimapBounds(items: BoardItem[], annotations: BoardAnnotation[], viewport: Viewport, stageSize: StageSize): WorldRect {
+  const rects = [
+    getVisibleWorldRect(viewport, stageSize),
+    ...items.map(getItemWorldRect),
+    ...annotations.map(getAnnotationWorldRect)
+  ];
+  const left = Math.min(...rects.map((rect) => rect.x));
+  const top = Math.min(...rects.map((rect) => rect.y));
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
+  const padding = Math.max(160, Math.max(right - left, bottom - top) * 0.08);
+
+  return {
+    x: left - padding,
+    y: top - padding,
+    width: Math.max(right - left + padding * 2, 1),
+    height: Math.max(bottom - top + padding * 2, 1)
+  };
+}
+
 function getAnnotationCssVars(style: BoardAnnotationStyle): CSSProperties {
   const color = ANNOTATION_COLOR_THEME[style.color] ?? ANNOTATION_COLOR_THEME.ink;
 
@@ -418,7 +811,7 @@ function getToolIcon(tool: CanvasTool) {
   if (tool === "text") {
     return <Type size={18} />;
   }
-  if (tool === "sticky") {
+  if (tool === "template-sticky") {
     return <StickyNote size={18} />;
   }
   if (tool === "section") {
@@ -430,7 +823,39 @@ function getToolIcon(tool: CanvasTool) {
   if (tool === "line") {
     return <Minus size={18} />;
   }
+  if (tool === "template-hot-to-lame") {
+    return <ArrowRight size={18} />;
+  }
+  if (tool === "template-quadrant") {
+    return <Grid2X2 size={18} />;
+  }
+  if (tool === "template-top-n") {
+    return <ListOrdered size={18} />;
+  }
+  if (tool === "template-table") {
+    return <Table2 size={18} />;
+  }
   return <ArrowRight size={18} />;
+}
+
+function isTemplateTool(tool: CanvasTool): tool is TemplateTool {
+  return tool.startsWith("template-");
+}
+
+function isDirectAnnotationTool(tool: CanvasTool): tool is DirectAnnotationTool {
+  return tool !== "select" && !isTemplateTool(tool);
+}
+
+function getShortcutTitle(label: string, shortcut: string) {
+  return `${label} (${shortcut})`;
+}
+
+function normalizeShortcutKey(event: KeyboardEvent) {
+  return event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase();
+}
+
+function shouldReturnToSelectAfterCreate(kind: BoardAnnotationKind) {
+  return kind !== "line";
 }
 
 export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: BoardClientProps) {
@@ -444,6 +869,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const [title, setTitle] = useState<string>(t.appTitle);
   const [shareId, setShareId] = useState("");
   const [viewport, setViewport] = useState<Viewport>(DEFAULT_VIEWPORT);
+  const [stageSize, setStageSize] = useState<StageSize>({ width: 0, height: 0 });
   const [items, setItems] = useState<BoardItem[]>([]);
   const [annotations, setAnnotations] = useState<BoardAnnotation[]>([]);
   const [createdAt, setCreatedAt] = useState("");
@@ -455,8 +881,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [shareCopied, setShareCopied] = useState(false);
+  const [shareMessage, setShareMessage] = useState("");
   const [activeTool, setActiveTool] = useState<CanvasTool>("select");
+  const [isTemplateOpen, setIsTemplateOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [isMinimapOpen, setIsMinimapOpen] = useState(true);
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<string[]>([]);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -478,6 +907,29 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   useEffect(() => {
     viewportRef.current = viewport;
   }, [viewport]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+
+    if (!stage) {
+      return;
+    }
+
+    const stageElement = stage;
+
+    function updateStageSize() {
+      const rect = stageElement.getBoundingClientRect();
+      setStageSize({ width: rect.width, height: rect.height });
+    }
+
+    updateStageSize();
+    const resizeObserver = new ResizeObserver(updateStageSize);
+    resizeObserver.observe(stageElement);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [isLoading, loadError]);
 
   useEffect(() => {
     annotationsRef.current = annotations;
@@ -806,18 +1258,21 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         const dy = rawDy + snap.dy;
 
         setAnnotations((currentAnnotations) =>
-          currentAnnotations.map((annotation) => {
-            const original = drag.originals.find((entry) => entry.id === annotation.id);
+          moveIdsToEnd(
+            currentAnnotations.map((annotation) => {
+              const original = drag.originals.find((entry) => entry.id === annotation.id);
 
-            return original
-              ? {
-                  ...annotation,
-                  x: original.x + dx,
-                  y: original.y + dy,
-                  updatedAt: now
-                }
-              : annotation;
-          })
+              return original
+                ? {
+                    ...annotation,
+                    x: original.x + dx,
+                    y: original.y + dy,
+                    updatedAt: now
+                  }
+                : annotation;
+            }),
+            selectedIds
+          )
         );
         setSnapGuides(snap.guides);
         markDirty();
@@ -831,12 +1286,36 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         const now = new Date().toISOString();
 
         setAnnotations((currentAnnotations) =>
+          currentAnnotations.map((annotation) => {
+            if (annotation.id !== drag.annotationId) {
+              return annotation;
+            }
+
+            const resizeMax = getAnnotationResizeMax(annotation);
+
+            return {
+              ...annotation,
+              width: clamp(drag.startWidth + dx, MIN_ANNOTATION_SIZE, resizeMax.width),
+              height: clamp(drag.startHeight + dy, MIN_ANNOTATION_SIZE, resizeMax.height),
+              updatedAt: now
+            };
+          })
+        );
+        markDirty();
+        return;
+      }
+
+      if (drag.type === "annotation-width-extend") {
+        const world = clientToWorld(event.clientX, event.clientY);
+        const dx = world.x - drag.startWorldX;
+        const now = new Date().toISOString();
+
+        setAnnotations((currentAnnotations) =>
           currentAnnotations.map((annotation) =>
             annotation.id === drag.annotationId
               ? {
                   ...annotation,
-                  width: clamp(drag.startWidth + dx, MIN_ANNOTATION_SIZE, 2200),
-                  height: clamp(drag.startHeight + dy, MIN_ANNOTATION_SIZE, 1600),
+                  width: clamp(drag.startWidth + dx, MIN_HOT_TO_LAME_WIDTH, 2600),
                   updatedAt: now
                 }
               : annotation
@@ -916,15 +1395,20 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       }
 
       const world = clientToWorld(event.clientX, event.clientY);
+      const movingItemIds = new Set([drag.itemId]);
+
       setItems((currentItems) =>
-        currentItems.map((item) =>
-          item.id === drag.itemId
-            ? {
-                ...item,
-                x: world.x - drag.offsetX,
-                y: world.y - drag.offsetY
-              }
-            : item
+        moveIdsToEnd(
+          currentItems.map((item) =>
+            item.id === drag.itemId
+              ? {
+                  ...item,
+                  x: world.x - drag.offsetX,
+                  y: world.y - drag.offsetY
+                }
+              : item
+          ),
+          movingItemIds
         )
       );
       markDirty();
@@ -946,6 +1430,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               : annotation
           )
         );
+      }
+
+      if (drag.type === "annotation-create" && shouldReturnToSelectAfterCreate(drag.kind)) {
+        setActiveTool("select");
       }
 
       dragRef.current = { type: "none" };
@@ -1010,18 +1498,36 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        if (editingAnnotationId) {
+        if (isShortcutsOpen) {
+          event.preventDefault();
+          setIsShortcutsOpen(false);
+        } else if (isAddOpen) {
+          event.preventDefault();
+          setIsAddOpen(false);
+        } else if (contextMenu) {
+          event.preventDefault();
+          setContextMenu(null);
+        } else if (isEditableTarget(event.target)) {
+          return;
+        } else if (editingAnnotationId) {
+          event.preventDefault();
           setEditingAnnotationId(null);
         } else if (activeTool !== "select") {
+          event.preventDefault();
           setActiveTool("select");
+          setIsTemplateOpen(false);
         } else {
-          setContextMenu(null);
+          event.preventDefault();
           setSelectedAnnotationIds([]);
         }
         return;
       }
 
-      if (isEditableTarget(event.target)) {
+      if (event.isComposing || isEditableTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+
+      if (isAddOpen || contextMenu || isShortcutsOpen) {
         return;
       }
 
@@ -1044,9 +1550,49 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       if (event.key === "=" || event.key === "+") {
         event.preventDefault();
         zoomBy(1.1);
+        return;
+      }
+
+      if (!isReadOnly) {
+        const shortcutAction = TOOL_ACTION_BY_SHORTCUT[normalizeShortcutKey(event)];
+
+        if (shortcutAction) {
+          event.preventDefault();
+
+          if (shortcutAction === "addGame") {
+            setIsTemplateOpen(false);
+            setIsShortcutsOpen(false);
+            setContextMenu(null);
+            setIsAddOpen(true);
+            return;
+          }
+
+          if (shortcutAction === "templateMenu") {
+            setContextMenu(null);
+            setIsShortcutsOpen(false);
+            setIsTemplateOpen((isOpen) => !isOpen);
+            return;
+          }
+
+          setContextMenu(null);
+          setIsTemplateOpen(false);
+          setActiveTool(shortcutAction);
+        }
       }
     }
-  }, [activeTool, clientToWorld, editingAnnotationId, isReadOnly, markDirty, selectedAnnotationIds, zoomAtClientPoint, zoomBy]);
+  }, [
+    activeTool,
+    clientToWorld,
+    contextMenu,
+    editingAnnotationId,
+    isAddOpen,
+    isReadOnly,
+    isShortcutsOpen,
+    markDirty,
+    selectedAnnotationIds,
+    zoomAtClientPoint,
+    zoomBy
+  ]);
 
   function handleStagePointerDown(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {
@@ -1062,14 +1608,40 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
     const target = event.target;
 
-    if (target instanceof HTMLElement && target.closest(".game-card, .annotation-object, .annotation-stylebar, .canvas-tool-rail")) {
+    if (isEditableTarget(target)) {
+      return;
+    }
+
+    if (target instanceof HTMLElement && target.closest(".annotation-stylebar, .canvas-tool-rail")) {
+      return;
+    }
+
+    if (activeTool === "select" && target instanceof HTMLElement && target.closest(".game-card, .annotation-object")) {
       return;
     }
 
     setSelectedAnnotationIds([]);
     setEditingAnnotationId(null);
 
-    if (!isReadOnly && activeTool !== "select") {
+    if (!isReadOnly && isTemplateTool(activeTool)) {
+      const world = clientToWorld(event.clientX, event.clientY);
+      const nextAnnotations = createTemplateAnnotations(activeTool, world.x, world.y, t);
+      const nextAnnotationIds = nextAnnotations.map((annotation) => annotation.id);
+
+      setAnnotations((currentAnnotations) => [...currentAnnotations, ...nextAnnotations]);
+      setSelectedAnnotationIds(nextAnnotationIds);
+      markDirty();
+
+      if (activeTool === "template-sticky") {
+        setEditingAnnotationId(nextAnnotations[0]?.id ?? null);
+      }
+
+      setActiveTool("select");
+      dragRef.current = { type: "none" };
+      return;
+    }
+
+    if (!isReadOnly && isDirectAnnotationTool(activeTool)) {
       const world = clientToWorld(event.clientX, event.clientY);
       const nextAnnotation = createAnnotation(activeTool, world.x, world.y);
 
@@ -1077,7 +1649,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       setSelectedAnnotationIds([nextAnnotation.id]);
       markDirty();
 
-      if (nextAnnotation.kind === "text" || nextAnnotation.kind === "sticky" || nextAnnotation.kind === "section") {
+      if (nextAnnotation.kind === "text" || nextAnnotation.kind === "section") {
         setEditingAnnotationId(nextAnnotation.id);
       }
 
@@ -1102,7 +1674,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startItemDrag(event: PointerEvent<HTMLElement>, item: BoardItem) {
-    if (isReadOnly) {
+    if (isReadOnly || activeTool !== "select") {
       return;
     }
 
@@ -1192,8 +1764,60 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     }));
   }
 
+  function setSelectedTopNConfig(patch: Partial<TopNConfig>) {
+    const now = new Date().toISOString();
+    updateAnnotations(selectedAnnotationIds, (annotation) => {
+      if (annotation.kind !== "topN") {
+        return annotation;
+      }
+
+      const currentConfig = parseTopNConfig(annotation.text);
+      const nextConfig = updateTopNConfig(currentConfig, patch);
+      const preferredSize = getTopNPreferredSize(nextConfig, {
+        width: annotation.width,
+        height: annotation.height,
+        config: currentConfig
+      });
+      const resizeMax = getAnnotationResizeMax(annotation);
+
+      return {
+        ...annotation,
+        width: clamp(preferredSize.width, MIN_ANNOTATION_SIZE, resizeMax.width),
+        height: clamp(preferredSize.height, MIN_ANNOTATION_SIZE, resizeMax.height),
+        text: serializeTopNConfig(nextConfig),
+        updatedAt: now
+      };
+    });
+  }
+
+  function setSelectedTableConfig(patch: Partial<TableConfig>) {
+    const now = new Date().toISOString();
+    updateAnnotations(selectedAnnotationIds, (annotation) => {
+      if (annotation.kind !== "table") {
+        return annotation;
+      }
+
+      const currentConfig = parseTableConfig(annotation.text);
+      const nextConfig = updateTableConfig(currentConfig, patch);
+      const preferredSize = getTablePreferredSize(nextConfig, {
+        width: annotation.width,
+        height: annotation.height,
+        config: currentConfig
+      });
+      const resizeMax = getAnnotationResizeMax(annotation);
+
+      return {
+        ...annotation,
+        width: clamp(preferredSize.width, MIN_ANNOTATION_SIZE, resizeMax.width),
+        height: clamp(preferredSize.height, MIN_ANNOTATION_SIZE, resizeMax.height),
+        text: serializeTableConfig(nextConfig),
+        updatedAt: now
+      };
+    });
+  }
+
   function startAnnotationDrag(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
-    if (isReadOnly || event.button !== 0 || isEditableTarget(event.target)) {
+    if (isReadOnly || activeTool !== "select" || event.button !== 0 || isEditableTarget(event.target)) {
       return;
     }
 
@@ -1228,7 +1852,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationResize(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
-    if (isReadOnly || event.button !== 0) {
+    if (isReadOnly || activeTool !== "select" || event.button !== 0) {
       return;
     }
 
@@ -1248,8 +1872,27 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     };
   }
 
+  function startAnnotationWidthExtend(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (isReadOnly || activeTool !== "select" || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    clearNativeSelection();
+    event.stopPropagation();
+    const world = clientToWorld(event.clientX, event.clientY);
+    setSelectedAnnotationIds([annotation.id]);
+    setEditingAnnotationId(null);
+    dragRef.current = {
+      type: "annotation-width-extend",
+      annotationId: annotation.id,
+      startWorldX: world.x,
+      startWidth: annotation.width
+    };
+  }
+
   function startLineEndpointDrag(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation, endpoint: "start" | "end") {
-    if (isReadOnly || event.button !== 0) {
+    if (isReadOnly || activeTool !== "select" || event.button !== 0) {
       return;
     }
 
@@ -1304,27 +1947,69 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     setLocale(nextLocale);
   }
 
-  function addGameToBoard(game: GameSnapshot) {
+  function selectCanvasTool(tool: CanvasTool) {
+    setActiveTool(tool);
+    setContextMenu(null);
+    setIsTemplateOpen(false);
+  }
+
+  function openAddGameDialog() {
+    setContextMenu(null);
+    setIsShortcutsOpen(false);
+    setIsTemplateOpen(false);
+    setIsAddOpen(true);
+  }
+
+  function navigateMinimap(nextViewport: Viewport) {
+    setViewport(nextViewport);
+
+    if (!isReadOnly) {
+      markDirty();
+    }
+  }
+
+  function addGamesToBoard(games: GameSnapshot[]) {
+    if (games.length === 0) {
+      return;
+    }
+
     const rect = stageRef.current?.getBoundingClientRect();
     const centerX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
     const centerY = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
     const world = clientToWorld(centerX, centerY);
+    const columns = Math.min(4, Math.ceil(Math.sqrt(games.length)));
+    const rows = Math.ceil(games.length / columns);
+    const gapX = 34;
+    const gapY = 56;
+    const itemWidth = CARD_WIDTH;
+    const itemHeight = Math.round(CARD_WIDTH / DEFAULT_COVER_RATIO) + 62;
+    const totalWidth = columns * itemWidth + (columns - 1) * gapX;
+    const totalHeight = rows * itemHeight + (rows - 1) * gapY;
 
-    const nextItem: BoardItem = {
-      id: createId(),
-      bggId: game.bggId,
-      x: world.x - CARD_WIDTH / 2,
-      y: world.y - 120,
-      scale: 1,
-      note: "",
-      status: "拥有",
-      coverMode: "native",
-      gameSnapshot: game
-    };
+    const nextItems: BoardItem[] = games.map((game, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
 
-    setItems((currentItems) => [...currentItems, nextItem]);
+      return {
+        id: createId(),
+        bggId: game.bggId,
+        x: world.x - totalWidth / 2 + column * (itemWidth + gapX),
+        y: world.y - totalHeight / 2 + row * (itemHeight + gapY),
+        scale: 1,
+        note: "",
+        status: "拥有",
+        coverMode: "native",
+        gameSnapshot: game
+      };
+    });
+
+    setItems((currentItems) => [...currentItems, ...nextItems]);
     markDirty();
     setIsAddOpen(false);
+  }
+
+  function addGameToBoard(game: GameSnapshot) {
+    addGamesToBoard([game]);
   }
 
   function handleTitleChange(value: string) {
@@ -1341,7 +2026,14 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       return;
     }
 
-    const url = `${window.location.origin}/s/${shareId}`;
+    const url = new URL(withBasePath(`/s/${shareId}`), window.location.origin).toString();
+
+    function showShareMessage(message: string) {
+      setShareMessage(message);
+      window.setTimeout(() => {
+        setShareMessage("");
+      }, 2200);
+    }
 
     try {
       if (navigator.share) {
@@ -1354,9 +2046,20 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       }
     }
 
-    await navigator.clipboard.writeText(url);
-    setShareCopied(true);
-    window.setTimeout(() => setShareCopied(false), 1600);
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is not available.");
+      }
+
+      await navigator.clipboard.writeText(url);
+      showShareMessage(t.shareCopied);
+      return;
+    } catch (error) {
+      console.warn("Could not copy share link automatically:", error);
+    }
+
+    window.prompt(t.shareCopyPrompt, url);
+    showShareMessage(t.shareCopyManual);
   }
 
   if (isLoading) {
@@ -1370,8 +2073,8 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
   const contextMenuItem = contextMenu ? items.find((item) => item.id === contextMenu.itemId) : undefined;
   const selectedAnnotations = annotations.filter((annotation) => selectedAnnotationIds.includes(annotation.id));
-  const backgroundAnnotations = annotations.filter((annotation) => annotation.kind === "section" || annotation.kind === "rectangle");
-  const foregroundAnnotations = annotations.filter((annotation) => annotation.kind !== "section" && annotation.kind !== "rectangle");
+  const textAnnotations = annotations.filter((annotation) => getAnnotationLayerPriority(annotation) === TEXT_LAYER_PRIORITY);
+  const componentAnnotations = annotations.filter((annotation) => getAnnotationLayerPriority(annotation) === COMPONENT_LAYER_PRIORITY);
   const stylebarPosition = getStylebarPosition(selectedAnnotations, viewport, stageRef.current);
 
   if (loadError) {
@@ -1409,6 +2112,23 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
         <div className="toolbar-actions">
           <LanguageSelect label={t.language} locale={locale} onChange={handleLocaleChange} />
+          {!isReadOnly ? (
+            <ShortcutHelp
+              isOpen={isShortcutsOpen}
+              t={t}
+              onClose={() => setIsShortcutsOpen(false)}
+              onToggle={() => setIsShortcutsOpen((isOpen) => !isOpen)}
+            />
+          ) : null}
+          <button
+            aria-pressed={isMinimapOpen}
+            className={`icon-button${isMinimapOpen ? " is-active" : ""}`}
+            type="button"
+            onClick={() => setIsMinimapOpen((isOpen) => !isOpen)}
+            title={isMinimapOpen ? t.hideMinimap : t.showMinimap}
+          >
+            <Grid2X2 size={18} />
+          </button>
           <button className="icon-button" type="button" onClick={() => zoomBy(0.9)} title={t.zoomOut}>
             <ZoomOut size={18} />
           </button>
@@ -1422,23 +2142,47 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               {t.shareBoard}
             </button>
           ) : null}
-          {shareCopied ? <span className="copy-hint toolbar-copy-hint">{t.shareCopied}</span> : null}
+          {shareMessage ? <span className="copy-hint toolbar-copy-hint">{shareMessage}</span> : null}
         </div>
       </header>
 
       {!isReadOnly ? (
         <>
-          <CanvasToolRail activeTool={activeTool} onAddGame={() => setIsAddOpen(true)} onSelectTool={setActiveTool} t={t} />
+          <CanvasToolRail
+            activeTool={activeTool}
+            isTemplateOpen={isTemplateOpen}
+            t={t}
+            onAddGame={openAddGameDialog}
+            onSelectTool={selectCanvasTool}
+            onToggleTemplateMenu={() => {
+              setContextMenu(null);
+              setIsShortcutsOpen(false);
+              setIsTemplateOpen((isOpen) => !isOpen);
+            }}
+          />
           {selectedAnnotations.length > 0 ? (
             <AnnotationStyleBar
               onDelete={removeSelectedAnnotations}
               onStyleChange={setSelectedAnnotationStyle}
+              onTableConfigChange={setSelectedTableConfig}
+              onTopNConfigChange={setSelectedTopNConfig}
               position={stylebarPosition}
               selectedAnnotations={selectedAnnotations}
               t={t}
             />
           ) : null}
         </>
+      ) : null}
+
+      {isMinimapOpen && stageSize.width > 0 && stageSize.height > 0 ? (
+        <BoardMinimap
+          annotations={annotations}
+          items={items}
+          stageSize={stageSize}
+          t={t}
+          viewport={viewport}
+          onNavigate={navigateMinimap}
+        />
       ) : null}
 
       <section
@@ -1453,14 +2197,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
             transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`
           }}
         >
-          {backgroundAnnotations.map((annotation) => (
+          {textAnnotations.map((annotation, index) => (
             <AnnotationObject
               annotation={annotation}
               editingId={editingAnnotationId}
               key={annotation.id}
+              zIndex={getLayerZIndex(TEXT_LAYER_PRIORITY, index)}
               onDoubleClick={setEditingAnnotationId}
               onLineEndpointDrag={startLineEndpointDrag}
               onPointerDown={startAnnotationDrag}
+              onWidthExtendStart={startAnnotationWidthExtend}
               onResizeStart={startAnnotationResize}
               onTextChange={(annotationId, text) =>
                 updateAnnotations([annotationId], (currentAnnotation) => ({
@@ -1474,11 +2220,12 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               t={t}
             />
           ))}
-          {items.map((item) => (
+          {items.map((item, index) => (
             <GameCard
               item={item}
               key={item.id}
               locale={locale}
+              zIndex={getLayerZIndex(GAME_CARD_LAYER_PRIORITY, index)}
               onContextMenu={openItemContextMenu}
               onDragStart={startItemDrag}
               onRemove={removeItem}
@@ -1487,14 +2234,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               t={t}
             />
           ))}
-          {foregroundAnnotations.map((annotation) => (
+          {componentAnnotations.map((annotation, index) => (
             <AnnotationObject
               annotation={annotation}
               editingId={editingAnnotationId}
               key={annotation.id}
+              zIndex={getLayerZIndex(COMPONENT_LAYER_PRIORITY, index)}
               onDoubleClick={setEditingAnnotationId}
               onLineEndpointDrag={startLineEndpointDrag}
               onPointerDown={startAnnotationDrag}
+              onWidthExtendStart={startAnnotationWidthExtend}
               onResizeStart={startAnnotationResize}
               onTextChange={(annotationId, text) =>
                 updateAnnotations([annotationId], (currentAnnotation) => ({
@@ -1514,7 +2263,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         </div>
 
         {items.length === 0 && !isReadOnly ? (
-          <button className="empty-canvas-cta" type="button" onClick={() => setIsAddOpen(true)}>
+          <button className="empty-canvas-cta" type="button" onClick={openAddGameDialog}>
             <Plus size={20} />
             {t.emptyBoard}
           </button>
@@ -1545,69 +2294,340 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         />
       ) : null}
 
-      {isAddOpen && !isReadOnly ? <SearchDialog locale={locale} onClose={() => setIsAddOpen(false)} onSelect={addGameToBoard} t={t} /> : null}
+      {isAddOpen && !isReadOnly ? (
+        <SearchDialog
+          locale={locale}
+          onClose={() => setIsAddOpen(false)}
+          onSelect={addGameToBoard}
+          onSelectMany={addGamesToBoard}
+          t={t}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function BoardMinimap({
+  annotations,
+  items,
+  onNavigate,
+  stageSize,
+  t,
+  viewport
+}: {
+  annotations: BoardAnnotation[];
+  items: BoardItem[];
+  onNavigate: (viewport: Viewport) => void;
+  stageSize: StageSize;
+  t: UiCopy;
+  viewport: Viewport;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const isDraggingRef = useRef(false);
+  const width = 180;
+  const height = 126;
+  const bounds = getMinimapBounds(items, annotations, viewport, stageSize);
+  const minimapScale = Math.min(width / bounds.width, height / bounds.height);
+  const offsetX = (width - bounds.width * minimapScale) / 2;
+  const offsetY = (height - bounds.height * minimapScale) / 2;
+  const visibleRect = getVisibleWorldRect(viewport, stageSize);
+  const itemRects = items.map(getItemWorldRect);
+  const annotationRects = annotations.map(getAnnotationWorldRect);
+
+  function worldToMinimap(rect: WorldRect) {
+    return {
+      x: offsetX + (rect.x - bounds.x) * minimapScale,
+      y: offsetY + (rect.y - bounds.y) * minimapScale,
+      width: Math.max(2, rect.width * minimapScale),
+      height: Math.max(2, rect.height * minimapScale)
+    };
+  }
+
+  function navigateFromPointer(event: PointerEvent<SVGSVGElement>) {
+    const rect = svgRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    const localX = clamp(event.clientX - rect.left, offsetX, offsetX + bounds.width * minimapScale);
+    const localY = clamp(event.clientY - rect.top, offsetY, offsetY + bounds.height * minimapScale);
+    const worldX = bounds.x + (localX - offsetX) / minimapScale;
+    const worldY = bounds.y + (localY - offsetY) / minimapScale;
+
+    onNavigate({
+      scale: viewport.scale,
+      x: stageSize.width / 2 - worldX * viewport.scale,
+      y: stageSize.height / 2 - worldY * viewport.scale
+    });
+  }
+
+  return (
+    <aside className="board-minimap" aria-label={t.minimap}>
+      <div className="board-minimap-title">{t.minimap}</div>
+      <svg
+        ref={svgRef}
+        className="board-minimap-map"
+        role="img"
+        viewBox={`0 0 ${width} ${height}`}
+        onPointerDown={(event) => {
+          if (event.button !== 0) {
+            return;
+          }
+
+          event.preventDefault();
+          isDraggingRef.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          navigateFromPointer(event);
+        }}
+        onPointerMove={(event) => {
+          if (isDraggingRef.current) {
+            navigateFromPointer(event);
+          }
+        }}
+        onPointerUp={(event) => {
+          isDraggingRef.current = false;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+      >
+        <rect className="board-minimap-bg" x={0} y={0} width={width} height={height} rx={8} />
+        {annotationRects.map((rect, index) => {
+          const miniRect = worldToMinimap(rect);
+
+          return <rect className="board-minimap-annotation" key={`annotation-${index}`} {...miniRect} rx={2} />;
+        })}
+        {itemRects.map((rect, index) => {
+          const miniRect = worldToMinimap(rect);
+
+          return <rect className="board-minimap-card" key={`item-${index}`} {...miniRect} rx={2} />;
+        })}
+        <rect className="board-minimap-viewport" {...worldToMinimap(visibleRect)} aria-label={t.minimapViewport} rx={3} />
+      </svg>
+    </aside>
   );
 }
 
 function CanvasToolRail({
   activeTool,
+  isTemplateOpen,
   onAddGame,
   onSelectTool,
+  onToggleTemplateMenu,
   t
 }: {
   activeTool: CanvasTool;
+  isTemplateOpen: boolean;
   onAddGame: () => void;
   onSelectTool: (tool: CanvasTool) => void;
+  onToggleTemplateMenu: () => void;
   t: UiCopy;
 }) {
   const tools: Array<{ id: CanvasTool; label: string }> = [
     { id: "select", label: t.selectTool },
     { id: "text", label: t.textTool },
-    { id: "sticky", label: t.stickyTool },
     { id: "section", label: t.sectionTool },
     { id: "rectangle", label: t.rectangleTool },
     { id: "line", label: t.lineTool },
     { id: "arrow", label: t.arrowTool }
   ];
+  const templateTools: Array<{ id: TemplateTool; label: string }> = [
+    { id: "template-sticky", label: t.stickyTool },
+    { id: "template-hot-to-lame", label: t.hotToLameTemplate },
+    { id: "template-quadrant", label: t.quadrantTemplate },
+    { id: "template-top-n", label: t.topNTemplate },
+    { id: "template-table", label: t.tableTemplate }
+  ];
+  const isTemplateActive = templateTools.some((tool) => tool.id === activeTool);
+
+  function selectTemplate(tool: TemplateTool) {
+    onSelectTool(tool);
+  }
 
   return (
     <aside className="canvas-tool-rail" aria-label={t.boardTools}>
       {tools.map((tool) => (
         <button
-          aria-label={tool.label}
+          aria-label={getShortcutTitle(tool.label, TOOL_SHORTCUTS[tool.id])}
           className={`tool-button${activeTool === tool.id ? " is-active" : ""}`}
           key={tool.id}
           type="button"
-          title={tool.label}
+          title={getShortcutTitle(tool.label, TOOL_SHORTCUTS[tool.id])}
           onClick={() => onSelectTool(tool.id)}
         >
           {getToolIcon(tool.id)}
         </button>
       ))}
+      <div className="template-tool-wrapper">
+        <button
+          aria-expanded={isTemplateOpen}
+          aria-label={getShortcutTitle(t.templateTool, TEMPLATE_MENU_SHORTCUT)}
+          className={`tool-button${isTemplateActive || isTemplateOpen ? " is-active" : ""}`}
+          type="button"
+          title={getShortcutTitle(t.templateTool, TEMPLATE_MENU_SHORTCUT)}
+          onClick={onToggleTemplateMenu}
+        >
+          <LayoutTemplate size={18} />
+        </button>
+
+        {isTemplateOpen ? (
+          <div className="template-tool-menu" role="menu" aria-label={t.templateTool}>
+            {templateTools.map((tool) => (
+              <button
+                aria-checked={activeTool === tool.id}
+                className={`template-tool-item${activeTool === tool.id ? " is-active" : ""}`}
+                key={tool.id}
+                role="menuitemradio"
+                type="button"
+                title={getShortcutTitle(tool.label, TOOL_SHORTCUTS[tool.id])}
+                onClick={() => selectTemplate(tool.id)}
+              >
+                {getToolIcon(tool.id)}
+                <span>{tool.label}</span>
+                <kbd>{TOOL_SHORTCUTS[tool.id]}</kbd>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
       <div className="tool-rail-separator" />
-      <button aria-label={t.addGame} className="tool-button" type="button" title={t.addGame} onClick={onAddGame}>
+      <button
+        aria-label={getShortcutTitle(t.addGame, ADD_GAME_SHORTCUT)}
+        className="tool-button"
+        type="button"
+        title={getShortcutTitle(t.addGame, ADD_GAME_SHORTCUT)}
+        onClick={onAddGame}
+      >
         <Plus size={18} />
       </button>
     </aside>
   );
 }
 
+function ShortcutHelp({
+  isOpen,
+  onClose,
+  onToggle,
+  t
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onToggle: () => void;
+  t: UiCopy;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const toolShortcuts = [
+    { label: t.selectTool, keys: [TOOL_SHORTCUTS.select, "Esc"] },
+    { label: t.addGame, keys: [ADD_GAME_SHORTCUT] },
+    { label: t.textTool, keys: [TOOL_SHORTCUTS.text] },
+    { label: t.sectionTool, keys: [TOOL_SHORTCUTS.section] },
+    { label: t.rectangleTool, keys: [TOOL_SHORTCUTS.rectangle] },
+    { label: t.lineTool, keys: [TOOL_SHORTCUTS.line] },
+    { label: t.arrowTool, keys: [TOOL_SHORTCUTS.arrow] }
+  ];
+  const templateShortcuts = [
+    { label: t.templateTool, keys: [TEMPLATE_MENU_SHORTCUT] },
+    { label: t.stickyTool, keys: [TOOL_SHORTCUTS["template-sticky"]] },
+    { label: t.hotToLameTemplate, keys: [TOOL_SHORTCUTS["template-hot-to-lame"]] },
+    { label: t.quadrantTemplate, keys: [TOOL_SHORTCUTS["template-quadrant"]] },
+    { label: t.topNTemplate, keys: [TOOL_SHORTCUTS["template-top-n"]] },
+    { label: t.tableTemplate, keys: [TOOL_SHORTCUTS["template-table"]] }
+  ];
+  const viewShortcuts = [
+    { label: t.zoomOut, keys: ["-"] },
+    { label: t.zoomIn, keys: ["=", "+"] },
+    { label: t.deleteAnnotation, keys: ["Delete", "Backspace"] },
+    { label: t.shortcutCancel, keys: ["Esc"] }
+  ];
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: globalThis.PointerEvent) {
+      if (!panelRef.current?.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [isOpen, onClose]);
+
+  return (
+    <div className="shortcut-help" ref={panelRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-label={t.shortcutHelp}
+        className="icon-button"
+        type="button"
+        title={t.shortcutHelp}
+        onClick={onToggle}
+      >
+        <Keyboard size={18} />
+      </button>
+
+      {isOpen ? (
+        <section className="shortcut-panel" aria-label={t.shortcutHelp}>
+          <div className="shortcut-panel-heading">
+            <h2>{t.shortcutHelp}</h2>
+          </div>
+          <ShortcutGroup items={toolShortcuts} title={t.shortcutToolsGroup} />
+          <ShortcutGroup items={templateShortcuts} title={t.shortcutTemplatesGroup} />
+          <ShortcutGroup items={viewShortcuts} title={t.shortcutViewGroup} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ShortcutGroup({ items, title }: { items: Array<{ label: string; keys: string[] }>; title: string }) {
+  return (
+    <div className="shortcut-group">
+      <h3>{title}</h3>
+      <div className="shortcut-list">
+        {items.map((item) => (
+          <div className="shortcut-row" key={item.label}>
+            <span>{item.label}</span>
+            <span className="shortcut-keys">
+              {item.keys.map((key) => (
+                <kbd key={key}>{key}</kbd>
+              ))}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AnnotationStyleBar({
   onDelete,
   onStyleChange,
+  onTableConfigChange,
+  onTopNConfigChange,
   position,
   selectedAnnotations,
   t
 }: {
   onDelete: () => void;
   onStyleChange: (patch: Partial<BoardAnnotationStyle>) => void;
+  onTableConfigChange: (patch: Partial<TableConfig>) => void;
+  onTopNConfigChange: (patch: Partial<TopNConfig>) => void;
   position: CSSProperties | undefined;
   selectedAnnotations: BoardAnnotation[];
   t: UiCopy;
 }) {
   const activeStyle = selectedAnnotations[0]?.style ?? getDefaultAnnotationStyle("text");
   const showFillControl = selectedAnnotations.some(canAnnotationUseFill);
+  const selectedTopN = selectedAnnotations.length === 1 && selectedAnnotations[0]?.kind === "topN" ? selectedAnnotations[0] : null;
+  const topNConfig = selectedTopN ? parseTopNConfig(selectedTopN.text) : null;
+  const selectedTable = selectedAnnotations.length === 1 && selectedAnnotations[0]?.kind === "table" ? selectedAnnotations[0] : null;
+  const tableConfig = selectedTable ? parseTableConfig(selectedTable.text) : null;
+  const showFontSizeControl = selectedAnnotations.some((annotation) => annotation.kind !== "table");
 
   return (
     <div className="annotation-stylebar" data-no-drag="true" aria-label={t.annotationStyle} style={position}>
@@ -1639,18 +2659,20 @@ function AnnotationStyleBar({
         ))}
       </div>
 
-      <div className="stylebar-group" aria-label={t.fontSize}>
-        {BOARD_ANNOTATION_FONT_SIZES.map((fontSize) => (
-          <button
-            className={`style-chip${activeStyle.fontSize === fontSize ? " is-active" : ""}`}
-            key={fontSize}
-            type="button"
-            onClick={() => onStyleChange({ fontSize })}
-          >
-            {fontSize}
-          </button>
-        ))}
-      </div>
+      {showFontSizeControl ? (
+        <div className="stylebar-group" aria-label={t.fontSize}>
+          {BOARD_ANNOTATION_FONT_SIZES.map((fontSize) => (
+            <button
+              className={`style-chip${activeStyle.fontSize === fontSize ? " is-active" : ""}`}
+              key={fontSize}
+              type="button"
+              onClick={() => onStyleChange({ fontSize })}
+            >
+              {fontSize}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {showFillControl ? (
         <button
@@ -1665,6 +2687,86 @@ function AnnotationStyleBar({
         >
           {t.fillStyle}
         </button>
+      ) : null}
+
+      {topNConfig ? (
+        <>
+          <label className="topn-style-control">
+            <span>{t.topCount}</span>
+            <input
+              max={TOPN_MAX_COUNT}
+              min={1}
+              type="number"
+              value={topNConfig.count}
+              onChange={(event) => onTopNConfigChange({ count: Number(event.target.value) })}
+            />
+          </label>
+
+          <div className="stylebar-group" aria-label={t.topOrder}>
+            <button
+              className={`style-chip wide${topNConfig.order === "ascending" ? " is-active" : ""}`}
+              type="button"
+              onClick={() => onTopNConfigChange({ order: "ascending" })}
+            >
+              {t.topAscending}
+            </button>
+            <button
+              className={`style-chip wide${topNConfig.order === "descending" ? " is-active" : ""}`}
+              type="button"
+              onClick={() => onTopNConfigChange({ order: "descending" })}
+            >
+              {t.topDescending}
+            </button>
+          </div>
+
+          <label className="topn-style-control compact">
+            <span>{t.topRows}</span>
+            <input
+              max={TOPN_MAX_ROWS}
+              min={1}
+              type="number"
+              value={topNConfig.rows}
+              onChange={(event) => onTopNConfigChange({ rows: Number(event.target.value) })}
+            />
+          </label>
+
+          <label className="topn-style-control compact">
+            <span>{t.topColumns}</span>
+            <input
+              max={TOPN_MAX_COLUMNS}
+              min={1}
+              type="number"
+              value={topNConfig.columns}
+              onChange={(event) => onTopNConfigChange({ columns: Number(event.target.value) })}
+            />
+          </label>
+        </>
+      ) : null}
+
+      {tableConfig ? (
+        <>
+          <label className="topn-style-control compact">
+            <span>{t.topRows}</span>
+            <input
+              max={TABLE_MAX_ROWS}
+              min={1}
+              type="number"
+              value={tableConfig.rows}
+              onChange={(event) => onTableConfigChange({ rows: Number(event.target.value) })}
+            />
+          </label>
+
+          <label className="topn-style-control compact">
+            <span>{t.topColumns}</span>
+            <input
+              max={TABLE_MAX_COLUMNS}
+              min={1}
+              type="number"
+              value={tableConfig.columns}
+              onChange={(event) => onTableConfigChange({ columns: Number(event.target.value) })}
+            />
+          </label>
+        </>
       ) : null}
 
       <button className="icon-button compact danger" type="button" title={t.deleteAnnotation} onClick={onDelete}>
@@ -1702,6 +2804,324 @@ function SnapGuideLine({ guide, scale }: { guide: SnapGuide; scale: number }) {
   );
 }
 
+function TopNAnnotationObject({
+  annotation,
+  onPointerDown,
+  onResizeStart,
+  readOnly,
+  selected,
+  styleVars
+}: {
+  annotation: BoardAnnotation;
+  onPointerDown: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  onResizeStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  readOnly: boolean;
+  selected: boolean;
+  styleVars: CSSProperties;
+}) {
+  const config = parseTopNConfig(annotation.text);
+  const entries = Array.from({ length: config.count }, (_, index) =>
+    config.order === "ascending" ? index + 1 : config.count - index
+  );
+
+  return (
+    <div
+      className={`annotation-object annotation-topn-object${selected ? " is-selected" : ""}`}
+      data-no-drag="true"
+      onPointerDown={(event) => onPointerDown(event, annotation)}
+      style={{
+        ...styleVars,
+        "--topn-rows": config.rows,
+        "--topn-columns": config.columns,
+        left: annotation.x,
+        top: annotation.y,
+        width: annotation.width,
+        height: annotation.height
+      } as CSSProperties}
+    >
+      <div className="topn-grid" aria-hidden="true">
+        {entries.map((rank) => (
+          <div className="topn-cell" key={`${config.order}-${rank}`}>
+            <span>#{rank}</span>
+          </div>
+        ))}
+      </div>
+
+      {selected && !readOnly ? (
+        <button
+          aria-label="调整组件大小"
+          className="annotation-resize-handle"
+          type="button"
+          onPointerDown={(event) => onResizeStart(event, annotation)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TableAnnotationObject({
+  annotation,
+  onPointerDown,
+  onResizeStart,
+  readOnly,
+  selected,
+  styleVars
+}: {
+  annotation: BoardAnnotation;
+  onPointerDown: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  onResizeStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  readOnly: boolean;
+  selected: boolean;
+  styleVars: CSSProperties;
+}) {
+  const config = parseTableConfig(annotation.text);
+  const cells = Array.from({ length: config.rows * config.columns }, (_, index) => index);
+
+  return (
+    <div
+      className={`annotation-object annotation-table-object${selected ? " is-selected" : ""}`}
+      data-no-drag="true"
+      onPointerDown={(event) => onPointerDown(event, annotation)}
+      style={{
+        ...styleVars,
+        "--table-rows": config.rows,
+        "--table-columns": config.columns,
+        left: annotation.x,
+        top: annotation.y,
+        width: annotation.width,
+        height: annotation.height
+      } as CSSProperties}
+    >
+      <div className="table-grid" aria-hidden="true">
+        {cells.map((cell) => (
+          <div className="table-cell" key={cell} />
+        ))}
+      </div>
+
+      {selected && !readOnly ? (
+        <button
+          aria-label="调整组件大小"
+          className="annotation-resize-handle"
+          type="button"
+          onPointerDown={(event) => onResizeStart(event, annotation)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function HotToLameAnnotationObject({
+  annotation,
+  onPointerDown,
+  onResizeStart,
+  onWidthExtendStart,
+  readOnly,
+  selected,
+  styleVars
+}: {
+  annotation: BoardAnnotation;
+  onPointerDown: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  onResizeStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  onWidthExtendStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  readOnly: boolean;
+  selected: boolean;
+  styleVars: CSSProperties;
+}) {
+  const rows = [
+    { label: "夯", className: "hot" },
+    { label: "顶级", className: "top" },
+    { label: "人上人", className: "elite" },
+    { label: "NPC", className: "npc" },
+    { label: "拉完了", className: "lame" }
+  ];
+  const rowHeight = Math.max(annotation.height / rows.length, 1);
+  const labelWidth = clamp(rowHeight * 1.18, 128, Math.max(128, annotation.width - 180));
+  const labelFontSize = clamp(annotation.style.fontSize * 2.35, 26, Math.max(26, rowHeight * 0.56));
+
+  return (
+    <div
+      className={`annotation-object annotation-hot-object${selected ? " is-selected" : ""}`}
+      data-no-drag="true"
+      onPointerDown={(event) => onPointerDown(event, annotation)}
+      style={{
+        ...styleVars,
+        "--hot-label-width": `${labelWidth}px`,
+        "--hot-label-font-size": `${labelFontSize}px`,
+        left: annotation.x,
+        top: annotation.y,
+        width: annotation.width,
+        height: annotation.height
+      } as CSSProperties}
+    >
+      <div className="hot-tier-table" aria-hidden="true">
+        {rows.map((row) => (
+          <div className="hot-tier-row" key={row.label}>
+            <div className={`hot-tier-label ${row.className}`}>{row.label}</div>
+            <div className="hot-tier-list" />
+          </div>
+        ))}
+      </div>
+
+      {selected && !readOnly ? (
+        <>
+          <button
+            aria-label="延长列表"
+            className="annotation-width-extend-handle"
+            type="button"
+            onPointerDown={(event) => onWidthExtendStart(event, annotation)}
+          />
+          <button
+            aria-label="调整组件大小"
+            className="annotation-resize-handle"
+            type="button"
+            onPointerDown={(event) => onResizeStart(event, annotation)}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function QuadrantAnnotationObject({
+  annotation,
+  isEditing,
+  onDoubleClick,
+  onPointerDown,
+  onResizeStart,
+  onTextChange,
+  readOnly,
+  selected,
+  styleVars,
+  t
+}: {
+  annotation: BoardAnnotation;
+  isEditing: boolean;
+  onDoubleClick: (annotationId: string | null) => void;
+  onPointerDown: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  onResizeStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
+  onTextChange: (annotationId: string, text: string) => void;
+  readOnly: boolean;
+  selected: boolean;
+  styleVars: CSSProperties;
+  t: UiCopy;
+}) {
+  const text = parseQuadrantText(annotation.text);
+  const axisPadding = Math.min(26, Math.max(8, annotation.width / 4), Math.max(8, annotation.height / 4));
+  const centerX = annotation.width / 2;
+  const centerY = annotation.height / 2;
+  const textInset = Math.min(18, Math.max(10, Math.min(annotation.width, annotation.height) / 22));
+  const cells: Array<{ key: keyof QuadrantText; className: string; label: string }> = [
+    { key: "topLeft", className: "top-left", label: t.quadrantOne },
+    { key: "topRight", className: "top-right", label: t.quadrantTwo },
+    { key: "bottomLeft", className: "bottom-left", label: t.quadrantThree },
+    { key: "bottomRight", className: "bottom-right", label: t.quadrantFour }
+  ];
+
+  function updateCell(key: keyof QuadrantText, value: string) {
+    onTextChange(
+      annotation.id,
+      serializeQuadrantText({
+        ...text,
+        [key]: value
+      })
+    );
+  }
+
+  return (
+    <div
+      className={`annotation-object annotation-quadrant-object${selected ? " is-selected" : ""}`}
+      data-no-drag="true"
+      onBlurCapture={(event) => {
+        const nextFocus = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+
+        if (isEditing && !event.currentTarget.contains(nextFocus)) {
+          onDoubleClick(null);
+        }
+      }}
+      onDoubleClick={() => {
+        if (!readOnly) {
+          onDoubleClick(annotation.id);
+        }
+      }}
+      onPointerDown={(event) => onPointerDown(event, annotation)}
+      style={{
+        ...styleVars,
+        "--quadrant-cell-inset": `${textInset}px`,
+        "--quadrant-axis-gap": `${Math.max(14, annotation.style.lineWidth * 5)}px`,
+        left: annotation.x,
+        top: annotation.y,
+        width: annotation.width,
+        height: annotation.height
+      } as CSSProperties}
+    >
+      <svg
+        aria-hidden="true"
+        className="annotation-quadrant-svg"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${annotation.width} ${annotation.height}`}
+      >
+        <defs>
+          <marker id={`quadrant-arrow-${annotation.id}`} markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
+            <path d="M 0 0 L 8 4 L 0 8 z" />
+          </marker>
+        </defs>
+        <line
+          markerEnd={`url(#quadrant-arrow-${annotation.id})`}
+          x1={axisPadding}
+          x2={annotation.width - axisPadding}
+          y1={centerY}
+          y2={centerY}
+        />
+        <line
+          markerEnd={`url(#quadrant-arrow-${annotation.id})`}
+          x1={centerX}
+          x2={centerX}
+          y1={annotation.height - axisPadding}
+          y2={axisPadding}
+        />
+        <text x={annotation.width - axisPadding / 2} y={centerY - 10}>
+          X
+        </text>
+        <text x={centerX + 10} y={axisPadding - 2}>
+          Y
+        </text>
+      </svg>
+
+      {cells.map((cell) => {
+        const value = text[cell.key];
+
+        return (
+          <div className={`quadrant-text-cell ${cell.className}`} key={cell.key}>
+            {isEditing ? (
+              <textarea
+                aria-label={cell.label}
+                className="quadrant-text-editor"
+                data-no-drag="true"
+                maxLength={220}
+                placeholder={cell.label}
+                value={value}
+                onChange={(event) => updateCell(cell.key, event.target.value)}
+                onPointerDown={(event) => event.stopPropagation()}
+              />
+            ) : value.trim() || !readOnly ? (
+              <div className="quadrant-text-content">{value}</div>
+            ) : null}
+          </div>
+        );
+      })}
+
+      {selected && !readOnly ? (
+        <button
+          aria-label={t.resizeAnnotation}
+          className="annotation-resize-handle"
+          type="button"
+          onPointerDown={(event) => onResizeStart(event, annotation)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function AnnotationObject({
   annotation,
   editingId,
@@ -1710,9 +3130,11 @@ function AnnotationObject({
   onPointerDown,
   onResizeStart,
   onTextChange,
+  onWidthExtendStart,
   readOnly,
   selected,
-  t
+  t,
+  zIndex
 }: {
   annotation: BoardAnnotation;
   editingId: string | null;
@@ -1721,12 +3143,74 @@ function AnnotationObject({
   onPointerDown: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
   onResizeStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
   onTextChange: (annotationId: string, text: string) => void;
+  onWidthExtendStart: (event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) => void;
   readOnly: boolean;
   selected: boolean;
   t: UiCopy;
+  zIndex: number;
 }) {
   const isEditing = editingId === annotation.id && !readOnly;
-  const styleVars = getAnnotationCssVars(annotation.style);
+  const styleVars = {
+    ...getAnnotationCssVars(annotation.style),
+    "--layer-z-index": zIndex
+  } as CSSProperties;
+
+  if (annotation.kind === "topN") {
+    return (
+      <TopNAnnotationObject
+        annotation={annotation}
+        onPointerDown={onPointerDown}
+        onResizeStart={onResizeStart}
+        readOnly={readOnly}
+        selected={selected}
+        styleVars={styleVars}
+      />
+    );
+  }
+
+  if (annotation.kind === "table") {
+    return (
+      <TableAnnotationObject
+        annotation={annotation}
+        onPointerDown={onPointerDown}
+        onResizeStart={onResizeStart}
+        readOnly={readOnly}
+        selected={selected}
+        styleVars={styleVars}
+      />
+    );
+  }
+
+  if (annotation.kind === "hotToLame") {
+    return (
+      <HotToLameAnnotationObject
+        annotation={annotation}
+        onPointerDown={onPointerDown}
+        onResizeStart={onResizeStart}
+        onWidthExtendStart={onWidthExtendStart}
+        readOnly={readOnly}
+        selected={selected}
+        styleVars={styleVars}
+      />
+    );
+  }
+
+  if (annotation.kind === "quadrant") {
+    return (
+      <QuadrantAnnotationObject
+        annotation={annotation}
+        isEditing={isEditing}
+        onDoubleClick={onDoubleClick}
+        onPointerDown={onPointerDown}
+        onResizeStart={onResizeStart}
+        onTextChange={onTextChange}
+        readOnly={readOnly}
+        selected={selected}
+        styleVars={styleVars}
+        t={t}
+      />
+    );
+  }
 
   if (isLinearAnnotation(annotation)) {
     const bounds = getAnnotationBounds(annotation);
@@ -1850,7 +3334,8 @@ function GameCard({
   onRemove,
   onUpdate,
   readOnly,
-  t
+  t,
+  zIndex
 }: {
   item: BoardItem;
   locale: Locale;
@@ -1860,10 +3345,14 @@ function GameCard({
   onUpdate: (itemId: string, updater: (item: BoardItem) => BoardItem) => void;
   readOnly: boolean;
   t: UiCopy;
+  zIndex: number;
 }) {
   const game = item.gameSnapshot;
   const displayName = getGameDisplayName(game, locale);
-  const coverUrl = game.localImage || game.image || game.localThumbnail || game.thumbnail;
+  const coverCandidates = compactCoverCandidates(game);
+  const coverCandidatesKey = coverCandidates.join("\n");
+  const [coverCandidateIndex, setCoverCandidateIndex] = useState(0);
+  const coverUrl = coverCandidates[coverCandidateIndex];
   const coverMode = item.coverMode ?? "native";
   const coverRatioKey = coverUrl ?? "";
   const [nativeCoverRatio, setNativeCoverRatio] = useState<CoverRatioState>({
@@ -1879,16 +3368,21 @@ function GameCard({
   const displayMechanics = game.localizedMechanics?.[locale] ?? game.mechanics;
   const displayDescription = game.localizedDescription?.[locale] || game.description;
 
+  useEffect(() => {
+    setCoverCandidateIndex(0);
+  }, [coverCandidatesKey]);
+
   return (
     <article
       className="game-card"
       onContextMenu={(event) => onContextMenu(event, item)}
       onPointerDown={(event) => onDragStart(event, item)}
       style={{
+        "--layer-z-index": zIndex,
         left: item.x,
         top: item.y,
         transform: `scale(${item.scale})`
-      }}
+      } as CSSProperties}
     >
       <div
         className={`cover-frame cover-frame-${coverMode}`}
@@ -1900,7 +3394,11 @@ function GameCard({
           <img
             alt={displayName}
             draggable={false}
+            key={coverUrl}
             src={withBasePath(coverUrl)}
+            onError={() => {
+              setCoverCandidateIndex((index) => Math.min(index + 1, coverCandidates.length));
+            }}
             onLoad={(event) => {
               const { naturalHeight, naturalWidth } = event.currentTarget;
 
@@ -2087,83 +3585,202 @@ function CardContextMenu({
   );
 }
 
+function isAbortLikeError(error: unknown) {
+  return (
+    error instanceof DOMException && error.name === "AbortError"
+  ) || (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.message === "The operation was aborted.")
+  );
+}
+
+async function readJsonPayload<T>(response: Response, fallbackError: string): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(fallbackError);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+function getFriendlyErrorMessage(error: unknown, fallbackError: string) {
+  if (!(error instanceof Error)) {
+    return fallbackError;
+  }
+
+  return error.message === "The string did not match the expected pattern." ? fallbackError : error.message;
+}
+
+function compactCoverCandidates(game: GameSnapshot) {
+  return Array.from(
+    new Set([game.localThumbnail, game.localImage, game.thumbnail, game.image].filter((url): url is string => Boolean(url)))
+  );
+}
+
 function SearchDialog({
   locale,
   onClose,
   onSelect,
+  onSelectMany,
   t
 }: {
   locale: Locale;
   onClose: () => void;
   onSelect: (game: GameSnapshot) => void;
+  onSelectMany: (games: GameSnapshot[]) => void;
   t: UiCopy;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<BggSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const [addingId, setAddingId] = useState("");
+  const [addingIds, setAddingIds] = useState<string[]>([]);
+  const [selectedResultIds, setSelectedResultIds] = useState<string[]>([]);
+  const [lastSearchedQuery, setLastSearchedQuery] = useState("");
+  const isComposingRef = useRef(false);
+  const searchAbortControllerRef = useRef<AbortController | null>(null);
+  const searchRequestIdRef = useRef(0);
+  const isAdding = addingIds.length > 0;
+  const selectedResults = results.filter((result) => selectedResultIds.includes(result.bggId));
 
   useEffect(() => {
-    if (query.trim().length < 2) {
-      setResults([]);
-      setSearchError("");
+    return () => {
+      searchAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  function handleQueryChange(value: string) {
+    searchRequestIdRef.current += 1;
+    searchAbortControllerRef.current?.abort();
+    setQuery(value);
+    setResults([]);
+    setSelectedResultIds([]);
+    setSearchError("");
+    setLastSearchedQuery("");
+    setIsSearching(false);
+  }
+
+  async function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (isComposingRef.current) {
       return;
     }
 
+    const trimmedQuery = query.trim();
+
+    if (trimmedQuery.length < 2) {
+      handleQueryChange(query);
+      return;
+    }
+
+    searchAbortControllerRef.current?.abort();
     const controller = new AbortController();
-    const timeout = window.setTimeout(async () => {
-      setIsSearching(true);
-      setSearchError("");
+    searchAbortControllerRef.current = controller;
+    const requestId = searchRequestIdRef.current + 1;
+    searchRequestIdRef.current = requestId;
+    setIsSearching(true);
+    setSearchError("");
+    setResults([]);
+    setSelectedResultIds([]);
+    setLastSearchedQuery("");
 
-      try {
-        const response = await fetch(
-          withBasePath(`/api/bgg/search?q=${encodeURIComponent(query.trim())}&locale=${encodeURIComponent(locale)}`),
-          {
+    try {
+      const response = await fetch(
+        withBasePath(`/api/bgg/search?q=${encodeURIComponent(trimmedQuery)}&locale=${encodeURIComponent(locale)}`),
+        {
           signal: controller.signal
-          }
-        );
-        const payload = (await response.json()) as { results?: BggSearchResult[]; error?: string };
+        }
+      );
+      const payload = await readJsonPayload<{ results?: BggSearchResult[]; error?: string }>(response, t.searchFailed);
 
-        if (!response.ok) {
-          throw new Error(payload.error ?? t.searchFailed);
-        }
-
-        setResults(payload.results ?? []);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setSearchError(error instanceof Error ? error.message : t.searchFailed);
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsSearching(false);
-        }
+      if (requestId !== searchRequestIdRef.current) {
+        return;
       }
-    }, 420);
 
-    return () => {
-      controller.abort();
-      window.clearTimeout(timeout);
-    };
-  }, [locale, query, t.searchFailed]);
+      if (!response.ok) {
+        throw new Error(payload.error ?? t.searchFailed);
+      }
+
+      setResults(payload.results ?? []);
+      setLastSearchedQuery(trimmedQuery);
+    } catch (error) {
+      if (requestId === searchRequestIdRef.current && !controller.signal.aborted && !isAbortLikeError(error)) {
+        setSearchError(getFriendlyErrorMessage(error, t.searchFailed));
+      }
+    } finally {
+      if (searchAbortControllerRef.current === controller) {
+        searchAbortControllerRef.current = null;
+      }
+
+      if (requestId === searchRequestIdRef.current && !controller.signal.aborted) {
+        setIsSearching(false);
+      }
+    }
+  }
+
+  async function fetchGameDetail(result: BggSearchResult) {
+    const response = await fetch(withBasePath(`/api/bgg/things/${result.bggId}?locale=${encodeURIComponent(locale)}`));
+    const payload = await readJsonPayload<{ game?: GameSnapshot; error?: string }>(response, t.detailFailed);
+
+    if (!response.ok || !payload.game) {
+      throw new Error(payload.error ?? t.detailFailed);
+    }
+
+    return payload.game;
+  }
+
+  function toggleResultSelection(bggId: string) {
+    setSelectedResultIds((currentIds) => (
+      currentIds.includes(bggId) ? currentIds.filter((id) => id !== bggId) : [...currentIds, bggId]
+    ));
+  }
 
   async function selectResult(result: BggSearchResult) {
-    setAddingId(result.bggId);
+    if (isAdding) {
+      return;
+    }
+
+    setAddingIds([result.bggId]);
     setSearchError("");
 
     try {
-      const response = await fetch(withBasePath(`/api/bgg/things/${result.bggId}?locale=${encodeURIComponent(locale)}`));
-      const payload = (await response.json()) as { game?: GameSnapshot; error?: string };
+      const game = await fetchGameDetail(result);
+      setAddingIds([]);
+      onSelect(game);
+    } catch (error) {
+      setAddingIds([]);
 
-      if (!response.ok || !payload.game) {
-        throw new Error(payload.error ?? t.detailFailed);
+      if (!isAbortLikeError(error)) {
+        setSearchError(getFriendlyErrorMessage(error, t.detailFailed));
+      }
+    }
+  }
+
+  async function addSelectedResults() {
+    if (selectedResults.length === 0 || isAdding) {
+      return;
+    }
+
+    setAddingIds(selectedResults.map((result) => result.bggId));
+    setSearchError("");
+
+    try {
+      const games: GameSnapshot[] = [];
+
+      for (const result of selectedResults) {
+        games.push(await fetchGameDetail(result));
       }
 
-      onSelect(payload.game);
+      setAddingIds([]);
+      onSelectMany(games);
     } catch (error) {
-      setSearchError(error instanceof Error ? error.message : t.detailFailed);
-    } finally {
-      setAddingId("");
+      setAddingIds([]);
+
+      if (!isAbortLikeError(error)) {
+        setSearchError(getFriendlyErrorMessage(error, t.detailFailed));
+      }
     }
   }
 
@@ -2180,18 +3797,35 @@ function SearchDialog({
           </button>
         </div>
 
-        <label className="search-field">
+        <form className="search-field" role="search" onSubmit={handleSearchSubmit}>
           <Search size={18} />
           <input
             autoFocus
             placeholder={t.searchPlaceholder}
+            type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => handleQueryChange(event.target.value)}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
           />
           {isSearching ? <Loader2 className="spin" size={18} /> : null}
-        </label>
+        </form>
 
         {searchError ? <p className="error-text">{searchError}</p> : null}
+
+        {results.length > 0 ? (
+          <div className="search-bulk-actions">
+            <span>{t.selectedResultsCount.replace("{count}", String(selectedResults.length))}</span>
+            <button className="button secondary" disabled={selectedResults.length === 0 || isAdding} type="button" onClick={addSelectedResults}>
+              {isAdding && selectedResults.length > 0 ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
+              {t.addSelectedResults}
+            </button>
+          </div>
+        ) : null}
 
         <div className="search-results">
           {results.map((result) => {
@@ -2200,21 +3834,33 @@ function SearchDialog({
             const resultMeta = [result.yearPublished, result.thingType === "boardgameexpansion" ? t.expansion : ""]
               .filter(Boolean)
               .join(" · ");
+            const isSelected = selectedResultIds.includes(result.bggId);
+            const isResultAdding = addingIds.includes(result.bggId);
 
             return (
-              <button className="result-row" key={result.bggId} type="button" onClick={() => selectResult(result)}>
-                <span>
+              <div className={`result-row${isSelected ? " is-selected" : ""}`} key={result.bggId}>
+                <label className="result-select" aria-label={t.selectResult.replace("{name}", resultName)}>
+                  <input
+                    checked={isSelected}
+                    disabled={isAdding}
+                    type="checkbox"
+                    onChange={() => toggleResultSelection(result.bggId)}
+                  />
+                </label>
+                <button className="result-content" disabled={isAdding} type="button" onClick={() => toggleResultSelection(result.bggId)}>
                   <strong>{resultName}</strong>
                   {resultMeta ? <em>{resultMeta}</em> : null}
                   {result.matchedAlias ? <small>{t.aliasPrefix}: {result.matchedAlias}</small> : null}
                   {canonicalName ? <small>{t.originalName}: {canonicalName}</small> : null}
-                </span>
-                {addingId === result.bggId ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
-              </button>
+                </button>
+                <button className="icon-button result-add-button" disabled={isAdding} type="button" onClick={() => selectResult(result)} title={t.addGame}>
+                  {isResultAdding ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
+                </button>
+              </div>
             );
           })}
 
-          {query.trim().length >= 2 && !isSearching && !searchError && results.length === 0 ? (
+          {lastSearchedQuery === query.trim() && !isSearching && !searchError && results.length === 0 ? (
             <div className="result-empty">{t.noResults}</div>
           ) : null}
         </div>

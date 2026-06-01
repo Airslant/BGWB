@@ -85,6 +85,7 @@ function toPublicUser(user: AdminUser): User {
     id: user.id,
     nickname: user.nickname,
     email: user.email,
+    maxBoards: user.maxBoards,
     createdAt: user.createdAt
   };
 }

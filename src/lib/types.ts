@@ -2,7 +2,18 @@ export const BOARD_STATUSES = ["拥有", "想玩", "玩过", "心愿单", "已�
 export const SUPPORTED_LOCALES = ["en", "zh-CN"] as const;
 export const CARD_COVER_MODES = ["native", "uniform"] as const;
 export const USER_ROLES = ["user", "admin"] as const;
-export const BOARD_ANNOTATION_KINDS = ["text", "sticky", "section", "rectangle", "line", "arrow"] as const;
+export const BOARD_ANNOTATION_KINDS = [
+  "text",
+  "sticky",
+  "section",
+  "rectangle",
+  "line",
+  "arrow",
+  "quadrant",
+  "hotToLame",
+  "topN",
+  "table"
+] as const;
 export const BOARD_ANNOTATION_COLORS = ["ink", "moss", "brick", "navy", "amber", "cream"] as const;
 export const BOARD_ANNOTATION_LINE_WIDTHS = [1, 2, 4] as const;
 export const BOARD_ANNOTATION_FONT_SIZES = [14, 18, 24] as const;
@@ -123,6 +134,7 @@ export type User = {
   id: string;
   nickname: string;
   email: string;
+  maxBoards: number;
   createdAt: string;
 };
 

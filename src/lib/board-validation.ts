@@ -83,9 +83,15 @@ function sanitizeAnnotationFontSize(value: unknown): BoardAnnotationFontSize {
 
 function getDefaultAnnotationStyle(kind: BoardAnnotationKind): BoardAnnotationStyle {
   return {
-    color: kind === "sticky" ? "amber" : kind === "section" ? "moss" : DEFAULT_ANNOTATION_COLOR,
+    color:
+      kind === "sticky" ? "amber" : kind === "section" ? "moss" : kind === "quadrant" ? "navy" : DEFAULT_ANNOTATION_COLOR,
     lineWidth: DEFAULT_ANNOTATION_LINE_WIDTH,
-    fontSize: kind === "section" ? 24 : DEFAULT_ANNOTATION_FONT_SIZE,
+    fontSize:
+      kind === "section" || kind === "hotToLame" || kind === "topN" || kind === "table"
+        ? 24
+        : kind === "quadrant"
+          ? 18
+          : DEFAULT_ANNOTATION_FONT_SIZE,
     fill: kind === "sticky" || kind === "section",
     fillOpacity: kind === "sticky" ? 0.2 : kind === "section" ? 0.12 : 0
   };
@@ -177,6 +183,8 @@ function sanitizeAnnotation(value: unknown, existingById: Map<string, BoardAnnot
   const annotationId = sanitizeText(annotation.id, 80) || createId();
   const existingAnnotation = existingById.get(annotationId);
   const kind = sanitizeAnnotationKind(annotation.kind ?? existingAnnotation?.kind);
+  const textMaxLength = kind === "quadrant" ? 1200 : 500;
+  const dimensionLimit = kind === "topN" || kind === "table" ? 12000 : 5000;
   const now = new Date().toISOString();
 
   return {
@@ -184,9 +192,9 @@ function sanitizeAnnotation(value: unknown, existingById: Map<string, BoardAnnot
     kind,
     x: clamp(toFiniteNumber(annotation.x, existingAnnotation?.x ?? 0), -100000, 100000),
     y: clamp(toFiniteNumber(annotation.y, existingAnnotation?.y ?? 0), -100000, 100000),
-    width: clamp(toFiniteNumber(annotation.width, existingAnnotation?.width ?? 180), -5000, 5000),
-    height: clamp(toFiniteNumber(annotation.height, existingAnnotation?.height ?? 80), -5000, 5000),
-    text: sanitizeText(annotation.text ?? existingAnnotation?.text, 500),
+    width: clamp(toFiniteNumber(annotation.width, existingAnnotation?.width ?? 180), -dimensionLimit, dimensionLimit),
+    height: clamp(toFiniteNumber(annotation.height, existingAnnotation?.height ?? 80), -dimensionLimit, dimensionLimit),
+    text: sanitizeText(annotation.text ?? existingAnnotation?.text, textMaxLength),
     style: sanitizeAnnotationStyle(annotation.style ?? existingAnnotation?.style, kind),
     createdAt: sanitizeText(annotation.createdAt, 40) || existingAnnotation?.createdAt || now,
     updatedAt: now

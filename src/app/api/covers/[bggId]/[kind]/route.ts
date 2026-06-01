@@ -27,6 +27,7 @@ export async function GET(_request: Request, context: RouteContext) {
   return new Response(asset.bytes, {
     headers: {
       "Cache-Control": "public, max-age=31536000, immutable",
+      "Content-Length": String(asset.bytes.byteLength),
       "Content-Type": asset.contentType,
       "X-BGWB-Cover-Cached-At": asset.cachedAt
     }

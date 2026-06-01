@@ -281,6 +281,8 @@ export function AdminUsersClient() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [users, setUsers] = useState<AdminUserSummary[]>([]);
+  const [limitDrafts, setLimitDrafts] = useState<Record<string, string>>({});
+  const [updatingLimitId, setUpdatingLimitId] = useState("");
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -298,7 +300,9 @@ export function AdminUsersClient() {
         throw new Error(payload.error ?? "加载用户失败");
       }
 
-      setUsers(payload.users ?? []);
+      const nextUsers = payload.users ?? [];
+      setUsers(nextUsers);
+      setLimitDrafts(Object.fromEntries(nextUsers.map((user) => [user.id, String(user.maxBoards)])));
       setTotal(payload.total ?? 0);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "加载用户失败");
@@ -344,6 +348,36 @@ export function AdminUsersClient() {
     await loadUsers();
   }
 
+  async function updateBoardLimit(user: AdminUserSummary) {
+    const maxBoards = Number(limitDrafts[user.id]);
+
+    if (!Number.isInteger(maxBoards) || maxBoards < 0 || maxBoards > 500) {
+      setError("白板上限需要是 0-500 之间的整数");
+      return;
+    }
+
+    setUpdatingLimitId(user.id);
+    setError("");
+
+    const response = await fetch(withBasePath(`/api/admin/users/${user.id}`), {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ maxBoards })
+    });
+    const payload = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      setError(payload.error ?? "更新白板上限失败");
+      setUpdatingLimitId("");
+      return;
+    }
+
+    await loadUsers();
+    setUpdatingLimitId("");
+  }
+
   return (
     <AdminFrame title="用户管理" subtitle={`共 ${total} 个用户`}>
       <form className="admin-filter-bar" onSubmit={submitSearch}>
@@ -374,6 +408,7 @@ export function AdminUsersClient() {
               <th>角色</th>
               <th>状态</th>
               <th>白板</th>
+              <th>白板上限</th>
               <th>卡片</th>
               <th>注册</th>
               <th>更新</th>
@@ -390,6 +425,32 @@ export function AdminUsersClient() {
                 <td>{user.role === "admin" ? "管理员" : "用户"}</td>
                 <td>{user.disabledAt ? "已禁用" : "正常"}</td>
                 <td>{user.boardCount}</td>
+                <td>
+                  <div className="admin-inline-control">
+                    <input
+                      aria-label={`${user.email} 白板上限`}
+                      min={0}
+                      max={500}
+                      type="number"
+                      value={limitDrafts[user.id] ?? String(user.maxBoards)}
+                      onChange={(event) =>
+                        setLimitDrafts((current) => ({
+                          ...current,
+                          [user.id]: event.target.value
+                        }))
+                      }
+                    />
+                    <button
+                      className="button secondary"
+                      disabled={updatingLimitId === user.id || limitDrafts[user.id] === String(user.maxBoards)}
+                      type="button"
+                      onClick={() => updateBoardLimit(user)}
+                    >
+                      {updatingLimitId === user.id ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+                      保存
+                    </button>
+                  </div>
+                </td>
                 <td>{user.itemCount}</td>
                 <td>{formatDate(user.createdAt)}</td>
                 <td>{formatDate(user.updatedAt)}</td>

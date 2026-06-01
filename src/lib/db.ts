@@ -46,8 +46,24 @@ const { DatabaseSync } = require("node:sqlite") as {
 };
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
+const DEFAULT_USER_MAX_BOARDS = 20;
+const MAX_USER_MAX_BOARDS = 500;
 
 let database: SqliteDatabase | undefined;
+
+function clampInteger(value: unknown, min: number, max: number, fallback: number) {
+  const parsed = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
+
+function normalizeUserMaxBoards(value: unknown) {
+  return clampInteger(value, 0, MAX_USER_MAX_BOARDS, DEFAULT_USER_MAX_BOARDS);
+}
 
 function normalizeCoverMode(value: unknown): CardCoverMode {
   return value === "uniform" ? "uniform" : "native";
@@ -91,6 +107,9 @@ function ensureUserColumns(db: SqliteDatabase) {
   if (!columns.some((column) => column.name === "email_verified_at")) {
     db.exec("ALTER TABLE users ADD COLUMN email_verified_at TEXT");
     db.exec("UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL");
+  }
+  if (!columns.some((column) => column.name === "max_boards")) {
+    db.exec(`ALTER TABLE users ADD COLUMN max_boards INTEGER NOT NULL DEFAULT ${DEFAULT_USER_MAX_BOARDS}`);
   }
 }
 
@@ -153,6 +172,7 @@ function getDb() {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
+      max_boards INTEGER NOT NULL DEFAULT 20,
       disabled_at TEXT,
       disabled_reason TEXT,
       email_verified_at TEXT,
@@ -409,6 +429,7 @@ function rowToUser(row: unknown): AdminUser | null {
     nickname?: string;
     email: string;
     role?: string;
+    max_boards?: number;
     disabled_at?: string | null;
     disabled_reason?: string | null;
     created_at: string;
@@ -420,6 +441,7 @@ function rowToUser(row: unknown): AdminUser | null {
     nickname: value.nickname ?? "",
     email: value.email,
     role: normalizeRole(value.role),
+    maxBoards: normalizeUserMaxBoards(value.max_boards),
     disabledAt: value.disabled_at ?? null,
     disabledReason: value.disabled_reason ?? null,
     createdAt: value.created_at,
@@ -456,10 +478,10 @@ export function createUser(
 
   getDb()
     .prepare(
-      `INSERT INTO users (id, nickname, email, password_hash, role, email_verified_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO users (id, nickname, email, password_hash, role, max_boards, email_verified_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(id, nickname, email, passwordHash, role, emailVerifiedAt ?? now, now, now);
+    .run(id, nickname, email, passwordHash, role, DEFAULT_USER_MAX_BOARDS, emailVerifiedAt ?? now, now, now);
 
   const user = getUserById(id);
 
@@ -486,6 +508,17 @@ export function updateUserNickname(userId: string, nickname: string) {
   getDb()
     .prepare("UPDATE users SET nickname = ?, updated_at = ? WHERE id = ?")
     .run(nickname, now, userId);
+
+  return getUserById(userId);
+}
+
+export function updateUserMaxBoards(userId: string, maxBoards: number) {
+  const normalizedMaxBoards = normalizeUserMaxBoards(maxBoards);
+  const now = new Date().toISOString();
+
+  getDb()
+    .prepare("UPDATE users SET max_boards = ?, updated_at = ? WHERE id = ?")
+    .run(normalizedMaxBoards, now, userId);
 
   return getUserById(userId);
 }
@@ -631,7 +664,7 @@ export function consumeEmailVerificationCode(codeId: string) {
 export function getUserByEmail(email: string) {
   const row = getDb()
     .prepare(
-      `SELECT id, nickname, email, password_hash, role, disabled_at, disabled_reason, created_at, updated_at
+      `SELECT id, nickname, email, password_hash, role, max_boards, disabled_at, disabled_reason, created_at, updated_at
       FROM users
       WHERE email = ?`
     )
@@ -643,7 +676,7 @@ export function getUserByEmail(email: string) {
 export function getUserWithPasswordById(userId: string) {
   const row = getDb()
     .prepare(
-      `SELECT id, nickname, email, password_hash, role, disabled_at, disabled_reason, created_at, updated_at
+      `SELECT id, nickname, email, password_hash, role, max_boards, disabled_at, disabled_reason, created_at, updated_at
       FROM users
       WHERE id = ?`
     )
@@ -655,7 +688,7 @@ export function getUserWithPasswordById(userId: string) {
 export function getUserById(userId: string) {
   const row = getDb()
     .prepare(
-      `SELECT id, nickname, email, role, disabled_at, disabled_reason, created_at, updated_at
+      `SELECT id, nickname, email, role, max_boards, disabled_at, disabled_reason, created_at, updated_at
       FROM users
       WHERE id = ?`
     )
@@ -683,7 +716,7 @@ export function getUserBySessionTokenHash(tokenHash: string) {
 
   const row = getDb()
     .prepare(
-      `SELECT users.id, users.nickname, users.email, users.role, users.disabled_at, users.disabled_reason, users.created_at, users.updated_at
+      `SELECT users.id, users.nickname, users.email, users.role, users.max_boards, users.disabled_at, users.disabled_reason, users.created_at, users.updated_at
       FROM sessions
       INNER JOIN users ON users.id = sessions.user_id
       WHERE sessions.token_hash = ? AND sessions.expires_at > ?`
@@ -784,6 +817,7 @@ export function listAdminUsers({
         users.nickname,
         users.email,
         users.role,
+        users.max_boards,
         users.disabled_at,
         users.disabled_reason,
         users.created_at,
@@ -803,6 +837,7 @@ export function listAdminUsers({
     nickname: string;
     email: string;
     role: UserRole;
+    max_boards: number;
     disabled_at: string | null;
     disabled_reason: string | null;
     created_at: string;
@@ -820,6 +855,7 @@ export function listAdminUsers({
       nickname: row.nickname,
       email: row.email,
       role: normalizeRole(row.role),
+      maxBoards: normalizeUserMaxBoards(row.max_boards),
       disabledAt: row.disabled_at,
       disabledReason: row.disabled_reason,
       createdAt: row.created_at,
@@ -1074,11 +1110,38 @@ export function listBoards(userId: string): BoardSummary[] {
   }));
 }
 
+export class BoardLimitError extends Error {
+  boardCount: number;
+  maxBoards: number;
+
+  constructor(boardCount: number, maxBoards: number) {
+    super(`Board limit reached: ${boardCount}/${maxBoards}`);
+    this.name = "BoardLimitError";
+    this.boardCount = boardCount;
+    this.maxBoards = maxBoards;
+  }
+}
+
+export function countBoardsForUser(userId: string) {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS count FROM boards WHERE owner_user_id = ?")
+    .get(userId) as { count: number };
+
+  return row.count;
+}
+
 export function createBoard(userId: string, locale: Locale = "en", title?: string) {
   const db = getDb();
   const now = new Date().toISOString();
   const boardId = randomUUID();
   const boardTitle = sanitizeBoardTitle(title, locale);
+  const owner = getUserById(userId);
+  const maxBoards = owner?.maxBoards ?? DEFAULT_USER_MAX_BOARDS;
+  const boardCount = countBoardsForUser(userId);
+
+  if (boardCount >= maxBoards) {
+    throw new BoardLimitError(boardCount, maxBoards);
+  }
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const shareId = createShareId();
@@ -1660,7 +1723,7 @@ export function getAdminAnalytics() {
   });
   const recentUsers = getDb()
     .prepare(
-      `SELECT id, nickname, email, role, disabled_at, disabled_reason, created_at, updated_at
+      `SELECT id, nickname, email, role, max_boards, disabled_at, disabled_reason, created_at, updated_at
       FROM users
       ORDER BY created_at DESC
       LIMIT 6`
@@ -1670,6 +1733,7 @@ export function getAdminAnalytics() {
     nickname: string;
     email: string;
     role: UserRole;
+    max_boards: number;
     disabled_at: string | null;
     disabled_reason: string | null;
     created_at: string;
@@ -1744,6 +1808,7 @@ export function getAdminAnalytics() {
       nickname: user.nickname,
       email: user.email,
       role: normalizeRole(user.role),
+      maxBoards: normalizeUserMaxBoards(user.max_boards),
       disabledAt: user.disabled_at,
       disabledReason: user.disabled_reason,
       createdAt: user.created_at,
