@@ -219,6 +219,7 @@ export const UI_COPY = {
     minutes: "min",
     language: "Language",
     statusLabels: {
+      无: "None",
       拥有: "Owned",
       想玩: "Want to play",
       玩过: "Played",
@@ -398,6 +399,7 @@ export const UI_COPY = {
     minutes: "分钟",
     language: "语言",
     statusLabels: {
+      无: "无",
       拥有: "拥有",
       想玩: "想玩",
       玩过: "玩过",

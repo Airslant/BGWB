@@ -71,6 +71,9 @@ const TABLE_MAX_ROWS = 20;
 const TABLE_MAX_COLUMNS = 20;
 const TABLE_CELL_WIDTH = TOPN_CELL_WIDTH;
 const TABLE_CELL_HEIGHT = TOPN_CELL_HEIGHT;
+const HOT_TO_LAME_ROW_COUNT = 5;
+const HOT_TO_LAME_DEFAULT_WIDTH = 2160;
+const HOT_TO_LAME_DEFAULT_HEIGHT = HOT_TO_LAME_ROW_COUNT * TOPN_CELL_HEIGHT;
 const TEXT_LAYER_PRIORITY = 1;
 const GAME_CARD_LAYER_PRIORITY = 2;
 const COMPONENT_LAYER_PRIORITY = 3;
@@ -91,7 +94,7 @@ const DEFAULT_ANNOTATION_SIZE: Record<BoardAnnotationKind, { width: number; heig
   line: { width: 180, height: 0 },
   arrow: { width: 180, height: 0 },
   quadrant: { width: 560, height: 380 },
-  hotToLame: { width: 760, height: 460 },
+  hotToLame: { width: HOT_TO_LAME_DEFAULT_WIDTH, height: HOT_TO_LAME_DEFAULT_HEIGHT },
   topN: { width: TOPN_DEFAULT_COLUMNS * TOPN_CELL_WIDTH, height: Math.ceil(TOPN_DEFAULT_COUNT / TOPN_DEFAULT_COLUMNS) * TOPN_CELL_HEIGHT },
   table: { width: TABLE_DEFAULT_COLUMNS * TABLE_CELL_WIDTH, height: TABLE_DEFAULT_ROWS * TABLE_CELL_HEIGHT }
 };
@@ -521,8 +524,8 @@ function createTemplateAnnotations(template: TemplateTool, x: number, y: number,
   if (template === "template-hot-to-lame") {
     return [
       createAnnotationFromBase("hotToLame", x, y, {
-        width: 760,
-        height: 460,
+        width: HOT_TO_LAME_DEFAULT_WIDTH,
+        height: HOT_TO_LAME_DEFAULT_HEIGHT,
         text: "",
         style: { color: "ink", fill: false, fillOpacity: 0, fontSize: 24, lineWidth: 2 }
       })
@@ -1997,7 +2000,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         y: world.y - totalHeight / 2 + row * (itemHeight + gapY),
         scale: 1,
         note: "",
-        status: "拥有",
+        status: "无",
         coverMode: "native",
         gameSnapshot: game
       };
@@ -3416,7 +3419,7 @@ function GameCard({
             {t.noCover}
           </div>
         )}
-        <span className="status-badge">{t.statusLabels[item.status]}</span>
+        {item.status !== "无" ? <span className="status-badge">{t.statusLabels[item.status]}</span> : null}
       </div>
 
       <div className="card-caption">

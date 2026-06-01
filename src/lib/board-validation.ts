@@ -22,7 +22,7 @@ import {
 import { createId } from "./id";
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
-const DEFAULT_STATUS: BoardStatus = "拥有";
+const DEFAULT_STATUS: BoardStatus = "无";
 const DEFAULT_ANNOTATION_COLOR: BoardAnnotationColor = "ink";
 const DEFAULT_ANNOTATION_LINE_WIDTH: BoardAnnotationLineWidth = 2;
 const DEFAULT_ANNOTATION_FONT_SIZE: BoardAnnotationFontSize = 18;

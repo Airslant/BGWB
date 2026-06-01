@@ -1030,7 +1030,7 @@ function rowToBoard(row: unknown, locale: Locale): Board | null {
         scale: typeof item.scale === "number" ? item.scale : 1,
         coverMode: normalizeCoverMode(item.coverMode),
         note: typeof item.note === "string" ? item.note : "",
-        status: item.status ?? "拥有",
+        status: item.status ?? "无",
         gameSnapshot: applyGameNaming(snapshot, locale)
       };
     });

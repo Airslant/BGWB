@@ -1,4 +1,4 @@
-export const BOARD_STATUSES = ["拥有", "想玩", "玩过", "心愿单", "已出掉"] as const;
+export const BOARD_STATUSES = ["无", "拥有", "想玩", "玩过", "心愿单", "已出掉"] as const;
 export const SUPPORTED_LOCALES = ["en", "zh-CN"] as const;
 export const CARD_COVER_MODES = ["native", "uniform"] as const;
 export const USER_ROLES = ["user", "admin"] as const;
