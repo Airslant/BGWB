@@ -675,6 +675,29 @@ a {
   overflow: auto;
 }
 
+.admin-pagination {
+  align-items: center;
+  background: rgba(255, 250, 240, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.admin-pagination span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.admin-pagination div {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
 .admin-table {
   border-collapse: collapse;
   min-width: 920px;
@@ -2360,9 +2383,14 @@ a {
 
   .boards-header,
   .boards-actions,
-  .board-list-actions {
+  .board-list-actions,
+  .admin-pagination {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-pagination div {
+    justify-content: flex-start;
   }
 
   .home-panel {

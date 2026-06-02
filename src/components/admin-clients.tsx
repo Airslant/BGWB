@@ -478,15 +478,17 @@ export function AdminGamesClient() {
   const [query, setQuery] = useState("");
   const [games, setGames] = useState<AdminGameSummary[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadGames(nextQuery = query) {
+  async function loadGames(nextQuery = query, nextPage = page) {
     setIsLoading(true);
     setError("");
 
     try {
-      const params = new URLSearchParams({ q: nextQuery });
+      const params = new URLSearchParams({ q: nextQuery, page: String(nextPage) });
       const response = await fetch(withBasePath(`/api/admin/games?${params.toString()}`));
       const payload = (await response.json()) as AdminListResponse<{ games?: AdminGameSummary[]; error?: string }>;
 
@@ -496,6 +498,8 @@ export function AdminGamesClient() {
 
       setGames(payload.games ?? []);
       setTotal(payload.total ?? 0);
+      setPage(payload.page ?? nextPage);
+      setPageSize(payload.pageSize ?? 20);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "加载桌游失败");
     } finally {
@@ -510,8 +514,16 @@ export function AdminGamesClient() {
 
   async function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await loadGames();
+    await loadGames(query, 1);
   }
+
+  async function goToPage(nextPage: number) {
+    await loadGames(query, nextPage);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const pageEnd = Math.min(total, page * pageSize);
 
   return (
     <AdminFrame title="桌游信息管理" subtitle={`本地详情库共 ${total} 款桌游`}>
@@ -560,6 +572,19 @@ export function AdminGamesClient() {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="admin-pagination">
+        <span>
+          第 {page} / {totalPages} 页 · 显示 {pageStart}-{pageEnd} / {total}
+        </span>
+        <div>
+          <button className="button secondary" disabled={isLoading || page <= 1} type="button" onClick={() => goToPage(page - 1)}>
+            上一页
+          </button>
+          <button className="button secondary" disabled={isLoading || page >= totalPages} type="button" onClick={() => goToPage(page + 1)}>
+            下一页
+          </button>
+        </div>
       </div>
     </AdminFrame>
   );
