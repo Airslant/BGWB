@@ -36,6 +36,9 @@ import {
   BOARD_ANNOTATION_FONT_SIZES,
   BOARD_ANNOTATION_LINE_WIDTHS,
   BOARD_STATUSES,
+  MAX_VIEWPORT_SCALE,
+  MIN_VIEWPORT_SCALE,
+  VIEWPORT_SCALE_BASE,
   type BggSearchResult,
   type Board,
   type BoardAnnotation,
@@ -78,7 +81,7 @@ const TEXT_LAYER_PRIORITY = 1;
 const GAME_CARD_LAYER_PRIORITY = 2;
 const COMPONENT_LAYER_PRIORITY = 3;
 const LAYER_Z_INDEX_STEP = 10000;
-const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
+const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: VIEWPORT_SCALE_BASE };
 const CONTEXT_MENU_WIDTH = 224;
 const CONTEXT_MENU_HEIGHT = 188;
 const AUTOSAVE_DEBOUNCE_MS = 1200;
@@ -203,7 +206,7 @@ const TOOL_SHORTCUTS: Record<CanvasTool, string> = {
   line: "L",
   arrow: "A",
   "template-sticky": "N",
-  "template-hot-to-lame": "H",
+  "template-hot-to-lame": "D",
   "template-quadrant": "Q",
   "template-top-n": "O",
   "template-table": "G"
@@ -220,7 +223,7 @@ const TOOL_ACTION_BY_SHORTCUT: Record<string, ShortcutToolAction> = {
   a: "arrow",
   m: "templateMenu",
   n: "template-sticky",
-  h: "template-hot-to-lame",
+  d: "template-hot-to-lame",
   q: "template-quadrant",
   o: "template-top-n",
   g: "template-table"
@@ -867,6 +870,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const annotationsRef = useRef<BoardAnnotation[]>([]);
   const dragRef = useRef<DragState>({ type: "none" });
   const gestureScaleRef = useRef(1);
+  const handPanKeyPressedRef = useRef(false);
   const { locale, setLocale, t } = useLocale();
 
   const [title, setTitle] = useState<string>(t.appTitle);
@@ -1186,7 +1190,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       const currentViewport = viewportRef.current;
       const localX = clientX - rect.left;
       const localY = clientY - rect.top;
-      const nextScale = clamp(currentViewport.scale * multiplier, 0.35, 2.2);
+      const nextScale = clamp(currentViewport.scale * multiplier, MIN_VIEWPORT_SCALE, MAX_VIEWPORT_SCALE);
       const worldX = (localX - currentViewport.x) / currentViewport.scale;
       const worldY = (localY - currentViewport.y) / currentViewport.scale;
 
@@ -1485,11 +1489,15 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
 
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
 
       if (stage) {
         stage.removeEventListener("wheel", handleNativeWheel);
@@ -1531,6 +1539,12 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       }
 
       if (isAddOpen || contextMenu || isShortcutsOpen) {
+        return;
+      }
+
+      if (normalizeShortcutKey(event) === "h") {
+        event.preventDefault();
+        handPanKeyPressedRef.current = true;
         return;
       }
 
@@ -1583,6 +1597,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         }
       }
     }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      if (normalizeShortcutKey(event) === "h") {
+        handPanKeyPressedRef.current = false;
+      }
+    }
+
+    function handleWindowBlur() {
+      handPanKeyPressedRef.current = false;
+    }
   }, [
     activeTool,
     clientToWorld,
@@ -1597,7 +1621,31 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     zoomBy
   ]);
 
+  function shouldStartCanvasPan(event: PointerEvent<HTMLElement>) {
+    return event.button === 1 || (event.button === 0 && handPanKeyPressedRef.current);
+  }
+
+  function startCanvasPan(event: PointerEvent<HTMLElement>) {
+    event.preventDefault();
+    clearNativeSelection();
+    event.stopPropagation();
+    setContextMenu(null);
+    dragRef.current = {
+      type: "pan",
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: viewportRef.current.x,
+      startY: viewportRef.current.y
+    };
+    setIsPanning(true);
+  }
+
   function handleStagePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (shouldStartCanvasPan(event)) {
+      startCanvasPan(event);
+      return;
+    }
+
     if (event.button !== 0) {
       return;
     }
@@ -1666,17 +1714,15 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       return;
     }
 
-    dragRef.current = {
-      type: "pan",
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: viewportRef.current.x,
-      startY: viewportRef.current.y
-    };
-    setIsPanning(true);
+    startCanvasPan(event);
   }
 
   function startItemDrag(event: PointerEvent<HTMLElement>, item: BoardItem) {
+    if (shouldStartCanvasPan(event)) {
+      startCanvasPan(event);
+      return;
+    }
+
     if (isReadOnly || activeTool !== "select") {
       return;
     }
@@ -1820,6 +1866,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationDrag(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (shouldStartCanvasPan(event)) {
+      startCanvasPan(event);
+      return;
+    }
+
     if (isReadOnly || activeTool !== "select" || event.button !== 0 || isEditableTarget(event.target)) {
       return;
     }
@@ -1855,6 +1906,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationResize(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (shouldStartCanvasPan(event)) {
+      startCanvasPan(event);
+      return;
+    }
+
     if (isReadOnly || activeTool !== "select" || event.button !== 0) {
       return;
     }
@@ -1876,6 +1932,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationWidthExtend(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (shouldStartCanvasPan(event)) {
+      startCanvasPan(event);
+      return;
+    }
+
     if (isReadOnly || activeTool !== "select" || event.button !== 0) {
       return;
     }
@@ -1895,6 +1956,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startLineEndpointDrag(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation, endpoint: "start" | "end") {
+    if (shouldStartCanvasPan(event)) {
+      startCanvasPan(event);
+      return;
+    }
+
     if (isReadOnly || activeTool !== "select" || event.button !== 0) {
       return;
     }
@@ -2135,7 +2201,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
           <button className="icon-button" type="button" onClick={() => zoomBy(0.9)} title={t.zoomOut}>
             <ZoomOut size={18} />
           </button>
-          <span className="zoom-pill">{Math.round(viewport.scale * 100)}%</span>
+          <span className="zoom-pill">{Math.round((viewport.scale / VIEWPORT_SCALE_BASE) * 100)}%</span>
           <button className="icon-button" type="button" onClick={() => zoomBy(1.1)} title={t.zoomIn}>
             <ZoomIn size={18} />
           </button>
@@ -2536,6 +2602,7 @@ function ShortcutHelp({
     { label: t.tableTemplate, keys: [TOOL_SHORTCUTS["template-table"]] }
   ];
   const viewShortcuts = [
+    { label: t.panCanvas, keys: [t.middleMouseDrag, t.holdHDrag] },
     { label: t.zoomOut, keys: ["-"] },
     { label: t.zoomIn, keys: ["=", "+"] },
     { label: t.deleteAnnotation, keys: ["Delete", "Backspace"] },
@@ -3621,6 +3688,34 @@ function compactCoverCandidates(game: GameSnapshot) {
   );
 }
 
+function mergeSearchResult(existing: BggSearchResult, incoming: BggSearchResult): BggSearchResult {
+  return {
+    ...existing,
+    thingType:
+      existing.thingType === "boardgameexpansion" || incoming.thingType === "boardgameexpansion"
+        ? "boardgameexpansion"
+        : existing.thingType ?? incoming.thingType,
+    yearPublished: existing.yearPublished ?? incoming.yearPublished,
+    rank: existing.rank ?? incoming.rank,
+    averageRating: existing.averageRating ?? incoming.averageRating,
+    canonicalName: existing.canonicalName || incoming.canonicalName,
+    displayName: existing.displayName || incoming.displayName,
+    localizedName: existing.localizedName || incoming.localizedName,
+    matchedAlias: existing.matchedAlias || incoming.matchedAlias
+  };
+}
+
+function dedupeBggSearchResults(results: BggSearchResult[]) {
+  const byBggId = new Map<string, BggSearchResult>();
+
+  for (const result of results) {
+    const existing = byBggId.get(result.bggId);
+    byBggId.set(result.bggId, existing ? mergeSearchResult(existing, result) : result);
+  }
+
+  return Array.from(byBggId.values());
+}
+
 function SearchDialog({
   locale,
   onClose,
@@ -3706,7 +3801,7 @@ function SearchDialog({
         throw new Error(payload.error ?? t.searchFailed);
       }
 
-      setResults(payload.results ?? []);
+      setResults(dedupeBggSearchResults(payload.results ?? []));
       setLastSearchedQuery(trimmedQuery);
     } catch (error) {
       if (requestId === searchRequestIdRef.current && !controller.signal.aborted && !isAbortLikeError(error)) {

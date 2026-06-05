@@ -5,7 +5,9 @@ import { dirname, isAbsolute, join } from "node:path";
 
 import { getDefaultBoardTitle } from "./i18n";
 import { decodeHtmlEntities } from "./html-entities";
+import { BGG_LINK_TYPES, VIEWPORT_SCALE_BASE } from "./types";
 import type {
+  BggLink,
   BggSearchResult,
   AdminGameDetail,
   AdminGameSummary,
@@ -45,7 +47,7 @@ const { DatabaseSync } = require("node:sqlite") as {
   DatabaseSync: new (path: string) => SqliteDatabase;
 };
 
-const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
+const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: VIEWPORT_SCALE_BASE };
 const DEFAULT_USER_MAX_BOARDS = 20;
 const MAX_USER_MAX_BOARDS = 500;
 
@@ -283,6 +285,22 @@ function getDb() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_game_term_localizations_locale_type ON game_term_localizations (locale, term_type);
+
+    CREATE TABLE IF NOT EXISTS game_links (
+      bgg_id TEXT NOT NULL,
+      link_type TEXT NOT NULL,
+      linked_bgg_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      name_search TEXT NOT NULL,
+      inbound INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (bgg_id, link_type, linked_bgg_id, inbound),
+      FOREIGN KEY (bgg_id) REFERENCES games(bgg_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_game_links_type_name ON game_links (link_type, name_search);
+    CREATE INDEX IF NOT EXISTS idx_game_links_linked_bgg_id ON game_links (linked_bgg_id);
 
     CREATE TABLE IF NOT EXISTS game_index (
       bgg_id TEXT PRIMARY KEY,
@@ -2169,6 +2187,111 @@ export function importAdminTranslationMarkdown(markdown: string): AdminTranslati
   return result;
 }
 
+const GAME_LINK_FIELDS: Array<{ type: string; field: keyof GameSnapshot }> = [
+  { type: "boardgamedesigner", field: "designerLinks" },
+  { type: "boardgameartist", field: "artistLinks" },
+  { type: "boardgamepublisher", field: "publisherLinks" },
+  { type: "boardgamecategory", field: "categoryLinks" },
+  { type: "boardgamemechanic", field: "mechanicLinks" },
+  { type: "boardgamefamily", field: "familyLinks" },
+  { type: "boardgameexpansion", field: "expansionLinks" },
+  { type: "boardgameimplementation", field: "implementationLinks" },
+  { type: "boardgameintegration", field: "integrationLinks" },
+  { type: "boardgamecompilation", field: "compilationLinks" },
+  { type: "boardgameaccessory", field: "accessoryLinks" }
+];
+
+function normalizeGameLink(value: unknown, fallbackType?: string): BggLink | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const link = value as Partial<BggLink>;
+  const type = typeof link.type === "string" ? link.type.trim() : fallbackType;
+  const name = typeof link.name === "string" ? link.name.trim() : "";
+  const rawId = (value as { id?: unknown }).id;
+  const id = typeof rawId === "string" || typeof rawId === "number" ? String(rawId).trim() : undefined;
+
+  if (!type || !name) {
+    return null;
+  }
+
+  return {
+    ...(id ? { id } : {}),
+    type,
+    name,
+    ...(typeof link.inbound === "boolean" ? { inbound: link.inbound } : {})
+  };
+}
+
+function normalizeGameLinks(value: unknown, fallbackType?: string) {
+  return Array.isArray(value)
+    ? value
+        .map((link) => normalizeGameLink(link, fallbackType))
+        .filter((link): link is BggLink => Boolean(link))
+    : [];
+}
+
+function flattenGameLinks(game: GameSnapshot) {
+  const links: BggLink[] = [];
+
+  for (const type of BGG_LINK_TYPES) {
+    links.push(...normalizeGameLinks(game.links?.[type], type));
+  }
+
+  for (const { type, field } of GAME_LINK_FIELDS) {
+    links.push(...normalizeGameLinks(game[field], type));
+  }
+
+  const seen = new Set<string>();
+
+  return links.filter((link) => {
+    const key = `${link.type}:${link.id || link.name}:${link.inbound ? "1" : "0"}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function upsertGameLinks(db: SqliteDatabase, game: GameSnapshot, now: string) {
+  const links = flattenGameLinks(game);
+  const insert = db.prepare(
+    `INSERT INTO game_links (
+      bgg_id,
+      link_type,
+      linked_bgg_id,
+      name,
+      name_search,
+      inbound,
+      sort_order,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  db.prepare("DELETE FROM game_links WHERE bgg_id = ?").run(game.bggId);
+
+  links.forEach((link, index) => {
+    if (!link.id) {
+      return;
+    }
+
+    insert.run(
+      game.bggId,
+      link.type,
+      link.id,
+      link.name,
+      normalizeSearchText(link.name),
+      link.inbound ? 1 : 0,
+      index,
+      now
+    );
+  });
+}
+
 export function upsertGameSnapshot(game: GameSnapshot) {
   const now = new Date().toISOString();
   const db = getDb();
@@ -2220,6 +2343,7 @@ export function upsertGameSnapshot(game: GameSnapshot) {
     now
   );
 
+  upsertGameLinks(db, snapshot, now);
   upsertGameLocalization(game.bggId, "en", canonicalName, "bgg");
 }
 

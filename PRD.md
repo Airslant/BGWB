@@ -44,7 +44,8 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
   - 工具状态优先于已有对象：只有选择工具下点击白板对象才会选中/拖动；文字等创建工具点击已有对象区域时，应在点击位置创建对应对象。
   - 除直线工具外，使用其它工具在画布创建对象后，当前工具自动回到选择状态。
   - 白板层级固定为：文字优先级 1、桌游卡片优先级 2、其它整理组件优先级 3；数字越小层级越高；同一优先级内，最近移动的对象显示在更上层；卡片 hover 详情菜单仍特殊置顶。
-  - 白板编辑页支持单键工具快捷键：`V` 选择、`B` 添加桌游、`T` 文字、`S` 分区、`R` 矩形、`L` 直线、`A` 箭头、`M` 打开模版、`N` 便签、`H` 从夯到拉、`Q` 象限、`O` Top N、`G` 表格。
+  - 白板编辑页支持单键工具快捷键：`V` 选择、`B` 添加桌游、`T` 文字、`S` 分区、`R` 矩形、`L` 直线、`A` 箭头、`M` 打开模版、`N` 便签、`D` 从夯到拉、`Q` 象限、`O` Top N、`G` 表格。
+  - 白板浏览/编辑支持临时拖动画布：鼠标中键拖动可在任意桌游卡片或白板组件上平移画布；按住 `H` 时用鼠标左键拖动也会强制平移画布。
   - 白板右上角提供快捷键说明面板；左侧工具栏和模版二级菜单 hover 提示显示工具名和快捷键。
   - 工具快捷键只在编辑态画布中生效；输入框、备注框、文字编辑、搜索弹窗和其它弹层打开时不触发工具切换。
   - 白板右上角提供导航小地图，显示当前视野、桌游卡片和整理组件的大致位置；点击或拖动小地图可移动当前视野。
@@ -125,7 +126,7 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
   - `BoardItem`: `id`, `bggId`, `x`, `y`, `scale`, `coverMode`, `note`, `status`, `gameSnapshot`
   - `BoardAnnotation`: `id`, `kind`, `x`, `y`, `width`, `height`, `text`, `style`, `createdAt`, `updatedAt`，`kind` 为 `text` / `sticky` / `section` / `rectangle` / `line` / `arrow`。
   - `BoardSavePayload`: `title`, `viewport`, `items[id,bggId,x,y,scale,coverMode,note,status]`, `annotations`，不包含 `gameSnapshot`。
-  - `GameSnapshot`: API 返回给前端的桌游/扩展快照结构，包含可选 `thingType`、`displayName`、`canonicalName`、`localizedNames`、`aliases`、`localImage`、`localThumbnail`。
+  - `GameSnapshot`: API 返回给前端的桌游/扩展快照结构，包含可选 `thingType`、`displayName`、`canonicalName`、`localizedNames`、`aliases`、`localImage`、`localThumbnail`、`links`，以及按类型展开的 `designerLinks`、`publisherLinks`、`artistLinks`、`familyLinks`、`expansionLinks` 等 BGG link 关系。
   - `Game`: 本地桌游主数据，按 `bggId` 唯一保存 BGG 详情，多个白板复用同一份桌游资料。
   - `GameLocalization`: `bggId`, `locale`, `name`, `source`, `updatedAt`。
   - `GameAlias`: `id`, `bggId`, `locale`, `alias`, `aliasSearch`, `source`, `updatedAt`。
@@ -143,10 +144,10 @@ BGG 数据接入按官方 XML API 约束设计：服务端请求 BGG、携带 Au
 - BGG 只作为补数据源：搜索和详情都优先复用本地数据库。本地没有时才请求 BGG。
 - 搜索顺序：`game_localizations` 当前语言命中 -> `game_aliases` 当前语言命中 -> `games` 原名 -> `game_index` 英文轻索引 -> `bgg_cache` -> BGG XML。
 - 所有真实 BGG XML 请求统一走服务端串行队列，默认 5200ms 间隔；同一路径并发请求复用同一个 in-flight 请求。
-- BGG 搜索和详情结果做服务端缓存；搜索缓存 30 天，详情缓存 30 天；选中的桌游详情长期沉淀到本地 `games` 表。
+- BGG 搜索和详情结果做服务端缓存；搜索缓存 30 天，详情缓存 30 天；选中的桌游详情长期沉淀到本地 `games` 表，结构化 link 关系长期沉淀到 `game_links` 表。
 - 封面图首次随详情获取时下载到本地 `.data/covers/:bggId/`，manifest 记录原始 URL、文件名、类型和缓存时间；前端优先加载 `/api/covers/:bggId/image`，失败时回退 BGG 原图 URL。
 - 可通过 `npm run bgg:import-index` 下载 BGG 官方全量游戏 CSV 并导入 `game_index`，用于减少搜索阶段对 BGG 的请求。
-- 白板上的位置、缩放、备注、收藏状态保存到 `board_items`；桌游基础资料保存到 `games`，避免同一个桌游在多个白板里重复请求 BGG。
+- 白板上的位置、缩放、备注、收藏状态保存到 `board_items`；桌游基础资料保存到 `games`，BGG link ID 和关系保存到 `game_links`，避免同一个桌游在多个白板里重复请求 BGG。
 - 白板整理工具对象保存到 `board_annotations`，通过 `board_id` 关联白板；删除白板时级联删除。
 - 白板普通鼠标/触摸板滚动不触发画布缩放；仅保留触摸板 pinch 对画布缩放的控制。工具栏缩放按钮继续保留。
 - 白板缩放快捷键：`-` 缩小，`=` / `+` 放大；输入框、备注框、下拉框聚焦时不触发快捷键。

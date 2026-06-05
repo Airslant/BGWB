@@ -12,6 +12,7 @@ BGWB 是一个网页端桌游展示柜 MVP：用户用邮箱、昵称和密码�
 - `sessions`：HttpOnly cookie 对应的登录会话。
 - `email_verification_codes`：注册和找回密码的 6 位邮箱验证码哈希、频控和尝试次数。
 - `games`：本地桌游主数据，按 BGG ID 唯一保存。多个白板添加同一款游戏时复用这份数据。
+- `game_links`：BGG `thing` 返回的结构化 link 关系，保存 link 类型、BGG link ID、名称、inbound 标记和排序；覆盖设计师、画师、出版社、分类、机制、family、扩展、实现/重制、整合、合集和配件关系。
 - `game_localizations`：平台维护的每款游戏本地化正式名称，当前支持 `en` 和 `zh-CN`。
 - `game_aliases`：平台维护的每款游戏搜索别名，当前支持 `en` 和 `zh-CN`，只用于召回，不替代正式展示名。
 - `game_index`：BGG 全量游戏 CSV 轻索引，只存 ID、名称、排名、均分等搜索字段。
@@ -94,7 +95,7 @@ npm run bgg:export-translations
 npm run bgg:import-translations -- translations/bgg-translation-2026-05-27.md
 ```
 
-`npm run bgg:import-index` 会下载 BGG 官方 `bg_ranks` CSV 并导入 `game_index`。如果已经手动下载到 `.data/bgg/bg_ranks.csv`，使用 `npm run bgg:import-index -- --use-existing` 直接导入本地文件。CSV 只作为本地搜索索引；机制、设计师、人数等完整详情仍由 `/xmlapi2/thing` 按用户实际选择按需补齐桌游或扩展，并长期写入 `games`。封面首次获取详情时会下载到 `.data/covers`，前端优先读取本地封面，失败时回退 BGG 原始图片 URL。
+`npm run bgg:import-index` 会下载 BGG 官方 `bg_ranks` CSV 并导入 `game_index`。如果已经手动下载到 `.data/bgg/bg_ranks.csv`，使用 `npm run bgg:import-index -- --use-existing` 直接导入本地文件。CSV 只作为本地搜索索引；机制、设计师、人数等完整详情仍由 `/xmlapi2/thing` 按用户实际选择按需补齐桌游或扩展，并长期写入 `games` 和 `game_links`。封面首次获取详情时会下载到 `.data/covers`，前端优先读取本地封面，失败时回退 BGG 原始图片 URL。
 
 后台 `/admin/translations` 可直接下载新增待翻译 Markdown，并上传翻译后的 Markdown 回填。CLI 翻译命令保留用于本地维护或批处理。
 

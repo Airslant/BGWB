@@ -1,9 +1,13 @@
 import {
+  BGG_LINK_TYPES,
   BOARD_ANNOTATION_COLORS,
   BOARD_ANNOTATION_FONT_SIZES,
   BOARD_ANNOTATION_KINDS,
   BOARD_ANNOTATION_LINE_WIDTHS,
   BOARD_STATUSES,
+  MAX_VIEWPORT_SCALE,
+  MIN_VIEWPORT_SCALE,
+  VIEWPORT_SCALE_BASE,
   type Board,
   type BoardAnnotation,
   type BoardAnnotationColor,
@@ -11,6 +15,7 @@ import {
   type BoardAnnotationKind,
   type BoardAnnotationLineWidth,
   type BoardAnnotationStyle,
+  type BggLink,
   type BoardItem,
   type BoardItemSavePayload,
   type BoardSavePayload,
@@ -21,7 +26,7 @@ import {
 } from "./types";
 import { createId } from "./id";
 
-const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: 1 };
+const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, scale: VIEWPORT_SCALE_BASE };
 const DEFAULT_STATUS: BoardStatus = "无";
 const DEFAULT_ANNOTATION_COLOR: BoardAnnotationColor = "ink";
 const DEFAULT_ANNOTATION_LINE_WIDTH: BoardAnnotationLineWidth = 2;
@@ -45,7 +50,7 @@ function sanitizeViewport(value: unknown): Viewport {
   return {
     x: toFiniteNumber(viewport.x, DEFAULT_VIEWPORT.x),
     y: toFiniteNumber(viewport.y, DEFAULT_VIEWPORT.y),
-    scale: clamp(toFiniteNumber(viewport.scale, DEFAULT_VIEWPORT.scale), 0.35, 2.2)
+    scale: clamp(toFiniteNumber(viewport.scale, DEFAULT_VIEWPORT.scale), MIN_VIEWPORT_SCALE, MAX_VIEWPORT_SCALE)
   };
 }
 
@@ -126,6 +131,54 @@ function sanitizeStringList(value: unknown, maxLength = 80) {
     : [];
 }
 
+function sanitizeBggLink(value: unknown, fallbackType?: string): BggLink | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const link = value as Partial<BggLink>;
+  const type = sanitizeText(link.type, 80) || fallbackType || "";
+  const name = sanitizeText(link.name, 160);
+  const id = sanitizeText(link.id, 32);
+
+  if (!type || !name) {
+    return null;
+  }
+
+  return {
+    ...(id ? { id } : {}),
+    type,
+    name,
+    ...(typeof link.inbound === "boolean" ? { inbound: link.inbound } : {})
+  };
+}
+
+function sanitizeBggLinkList(value: unknown, fallback?: BggLink[], fallbackType?: string) {
+  const source = Array.isArray(value) ? value : fallback;
+
+  return Array.isArray(source)
+    ? source
+        .map((link) => sanitizeBggLink(link, fallbackType))
+        .filter((link): link is BggLink => Boolean(link))
+        .slice(0, 120)
+    : undefined;
+}
+
+function sanitizeBggLinksByType(value: unknown, fallback?: GameSnapshot["links"]) {
+  const source = value && typeof value === "object" ? value : fallback;
+
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    BGG_LINK_TYPES.map((type) => {
+      const list = sanitizeBggLinkList((source as Record<string, unknown>)[type], undefined, type);
+      return [type, list ?? []];
+    }).filter(([, list]) => (list as BggLink[]).length > 0)
+  );
+}
+
 function sanitizeGameSnapshot(value: unknown, bggId: string, fallback?: GameSnapshot): GameSnapshot {
   const snapshot = value && typeof value === "object" ? (value as Partial<GameSnapshot>) : fallback;
   const name = sanitizeText(snapshot?.name, 160) || fallback?.name || `BGG #${bggId}`;
@@ -135,9 +188,33 @@ function sanitizeGameSnapshot(value: unknown, bggId: string, fallback?: GameSnap
     ...(snapshot ?? {}),
     bggId,
     name,
+    links: sanitizeBggLinksByType(snapshot?.links, fallback?.links),
     designers: sanitizeStringList(snapshot?.designers ?? fallback?.designers),
+    designerLinks: sanitizeBggLinkList(snapshot?.designerLinks, fallback?.designerLinks, "boardgamedesigner"),
     categories: sanitizeStringList(snapshot?.categories ?? fallback?.categories),
-    mechanics: sanitizeStringList(snapshot?.mechanics ?? fallback?.mechanics)
+    categoryLinks: sanitizeBggLinkList(snapshot?.categoryLinks, fallback?.categoryLinks, "boardgamecategory"),
+    mechanics: sanitizeStringList(snapshot?.mechanics ?? fallback?.mechanics),
+    mechanicLinks: sanitizeBggLinkList(snapshot?.mechanicLinks, fallback?.mechanicLinks, "boardgamemechanic"),
+    publishers: sanitizeStringList(snapshot?.publishers ?? fallback?.publishers),
+    publisherLinks: sanitizeBggLinkList(snapshot?.publisherLinks, fallback?.publisherLinks, "boardgamepublisher"),
+    artists: sanitizeStringList(snapshot?.artists ?? fallback?.artists),
+    artistLinks: sanitizeBggLinkList(snapshot?.artistLinks, fallback?.artistLinks, "boardgameartist"),
+    families: sanitizeStringList(snapshot?.families ?? fallback?.families),
+    familyLinks: sanitizeBggLinkList(snapshot?.familyLinks, fallback?.familyLinks, "boardgamefamily"),
+    expansions: sanitizeStringList(snapshot?.expansions ?? fallback?.expansions),
+    expansionLinks: sanitizeBggLinkList(snapshot?.expansionLinks, fallback?.expansionLinks, "boardgameexpansion"),
+    implementations: sanitizeStringList(snapshot?.implementations ?? fallback?.implementations),
+    implementationLinks: sanitizeBggLinkList(
+      snapshot?.implementationLinks,
+      fallback?.implementationLinks,
+      "boardgameimplementation"
+    ),
+    integrations: sanitizeStringList(snapshot?.integrations ?? fallback?.integrations),
+    integrationLinks: sanitizeBggLinkList(snapshot?.integrationLinks, fallback?.integrationLinks, "boardgameintegration"),
+    compilations: sanitizeStringList(snapshot?.compilations ?? fallback?.compilations),
+    compilationLinks: sanitizeBggLinkList(snapshot?.compilationLinks, fallback?.compilationLinks, "boardgamecompilation"),
+    accessories: sanitizeStringList(snapshot?.accessories ?? fallback?.accessories),
+    accessoryLinks: sanitizeBggLinkList(snapshot?.accessoryLinks, fallback?.accessoryLinks, "boardgameaccessory")
   };
 }
 

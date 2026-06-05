@@ -14,7 +14,8 @@ import {
   upsertGameSnapshot
 } from "./db";
 import { decodeHtmlEntities } from "./html-entities";
-import type { BggSearchResult, BggThingType, GameSnapshot, Locale } from "./types";
+import { BGG_LINK_TYPES } from "./types";
+import type { BggLink, BggSearchResult, BggThingType, GameSnapshot, Locale } from "./types";
 
 const SEARCH_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const THING_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -62,6 +63,10 @@ function compactList(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).slice(0, 8);
 }
 
+function uniqueList(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
 function normalizeDescription(value: unknown) {
   if (typeof value !== "string") {
     return undefined;
@@ -100,12 +105,86 @@ type BggThingXmlItem = {
   link?: unknown;
 };
 
+type BggThingLinkXml = {
+  "@_id"?: string | number;
+  "@_type"?: string;
+  "@_value"?: string | number;
+  "@_inbound"?: string | boolean | number;
+};
+
 async function fetchBggXml(path: string): Promise<string> {
   return requestBggXml(path);
 }
 
 function excludeIds(results: BggSearchResult[]) {
   return results.map((result) => result.bggId);
+}
+
+function mergeSearchResult(existing: BggSearchResult, incoming: BggSearchResult): BggSearchResult {
+  return {
+    ...existing,
+    thingType:
+      existing.thingType === "boardgameexpansion" || incoming.thingType === "boardgameexpansion"
+        ? "boardgameexpansion"
+        : existing.thingType ?? incoming.thingType,
+    yearPublished: existing.yearPublished ?? incoming.yearPublished,
+    rank: existing.rank ?? incoming.rank,
+    averageRating: existing.averageRating ?? incoming.averageRating,
+    canonicalName: existing.canonicalName || incoming.canonicalName,
+    displayName: existing.displayName || incoming.displayName,
+    localizedName: existing.localizedName || incoming.localizedName,
+    matchedAlias: existing.matchedAlias || incoming.matchedAlias
+  };
+}
+
+function dedupeSearchResults(results: BggSearchResult[], limit = 20) {
+  const byBggId = new Map<string, BggSearchResult>();
+
+  for (const result of results) {
+    if (!result.bggId) {
+      continue;
+    }
+
+    const existing = byBggId.get(result.bggId);
+    byBggId.set(result.bggId, existing ? mergeSearchResult(existing, result) : result);
+  }
+
+  return Array.from(byBggId.values()).slice(0, limit);
+}
+
+function attrBoolean(value: unknown) {
+  return value === true || value === 1 || value === "1" || value === "true";
+}
+
+function normalizeBggLink(link: BggThingLinkXml): BggLink | null {
+  const type = textString(link["@_type"]);
+  const name = textString(link["@_value"])?.trim();
+
+  if (!type || !name) {
+    return null;
+  }
+
+  return {
+    id: textString(link["@_id"]),
+    type,
+    name,
+    ...(link["@_inbound"] !== undefined ? { inbound: attrBoolean(link["@_inbound"]) } : {})
+  };
+}
+
+function groupLinks(links: BggLink[]) {
+  return links.reduce<Record<string, BggLink[]>>((accumulator, link) => {
+    accumulator[link.type] = [...(accumulator[link.type] ?? []), link];
+    return accumulator;
+  }, {});
+}
+
+function linksOfType(linksByType: Record<string, BggLink[]>, type: string) {
+  return linksByType[type] ?? [];
+}
+
+function linkNames(links: BggLink[]) {
+  return uniqueList(links.map((link) => link.name));
 }
 
 function parseThingItem(item: BggThingXmlItem | undefined, fallbackBggId: string): GameSnapshot | null {
@@ -128,16 +207,24 @@ function parseThingItem(item: BggThingXmlItem | undefined, fallbackBggId: string
   const primaryName = names.find((name) => name["@_type"] === "primary") ?? names[0];
   const links = asArray(
     item.link as
-      | {
-          "@_type"?: string;
-          "@_value"?: string;
-        }
-      | Array<{
-          "@_type"?: string;
-          "@_value"?: string;
-        }>
+      | BggThingLinkXml
+      | BggThingLinkXml[]
       | undefined
-  );
+  )
+    .map(normalizeBggLink)
+    .filter((link): link is BggLink => Boolean(link));
+  const linksByType = groupLinks(links);
+  const designerLinks = linksOfType(linksByType, "boardgamedesigner");
+  const artistLinks = linksOfType(linksByType, "boardgameartist");
+  const publisherLinks = linksOfType(linksByType, "boardgamepublisher");
+  const categoryLinks = linksOfType(linksByType, "boardgamecategory");
+  const mechanicLinks = linksOfType(linksByType, "boardgamemechanic");
+  const familyLinks = linksOfType(linksByType, "boardgamefamily");
+  const expansionLinks = linksOfType(linksByType, "boardgameexpansion");
+  const implementationLinks = linksOfType(linksByType, "boardgameimplementation");
+  const integrationLinks = linksOfType(linksByType, "boardgameintegration");
+  const compilationLinks = linksOfType(linksByType, "boardgamecompilation");
+  const accessoryLinks = linksOfType(linksByType, "boardgameaccessory");
 
   return {
     bggId: String(item["@_id"] ?? fallbackBggId),
@@ -154,15 +241,31 @@ function parseThingItem(item: BggThingXmlItem | undefined, fallbackBggId: string
     minAge: attrNumber(item.minage),
     averageRating: attrNumber(item.statistics?.ratings?.average),
     description: normalizeDescription(item.description),
-    designers: compactList(
-      links.filter((link) => link["@_type"] === "boardgamedesigner").map((link) => textString(link["@_value"]) ?? "")
+    links: Object.fromEntries(
+      Object.entries(linksByType).filter(([type]) => BGG_LINK_TYPES.includes(type as (typeof BGG_LINK_TYPES)[number]))
     ),
-    categories: compactList(
-      links.filter((link) => link["@_type"] === "boardgamecategory").map((link) => textString(link["@_value"]) ?? "")
-    ),
-    mechanics: compactList(
-      links.filter((link) => link["@_type"] === "boardgamemechanic").map((link) => textString(link["@_value"]) ?? "")
-    )
+    designers: compactList(linkNames(designerLinks)),
+    designerLinks,
+    categories: compactList(linkNames(categoryLinks)),
+    categoryLinks,
+    mechanics: compactList(linkNames(mechanicLinks)),
+    mechanicLinks,
+    publishers: compactList(linkNames(publisherLinks)),
+    publisherLinks,
+    artists: compactList(linkNames(artistLinks)),
+    artistLinks,
+    families: compactList(linkNames(familyLinks)),
+    familyLinks,
+    expansions: compactList(linkNames(expansionLinks)),
+    expansionLinks,
+    implementations: compactList(linkNames(implementationLinks)),
+    implementationLinks,
+    integrations: compactList(linkNames(integrationLinks)),
+    integrationLinks,
+    compilations: compactList(linkNames(compilationLinks)),
+    compilationLinks,
+    accessories: compactList(linkNames(accessoryLinks)),
+    accessoryLinks
   };
 }
 
@@ -194,7 +297,7 @@ export async function searchBgg(query: string, locale: Locale = "en") {
     excludeIds([...localizedResults, ...aliasResults, ...localResults]),
     20 - localizedResults.length - aliasResults.length - localResults.length
   );
-  const combinedResults = [...localizedResults, ...aliasResults, ...localResults, ...indexResults].slice(0, 20);
+  const combinedResults = dedupeSearchResults([...localizedResults, ...aliasResults, ...localResults, ...indexResults]);
 
   if (combinedResults.length > 0) {
     return combinedResults;
@@ -204,13 +307,15 @@ export async function searchBgg(query: string, locale: Locale = "en") {
   const cached = getCache<BggSearchResult[]>(cacheKey);
 
   if (cached) {
-    return cached.map((result) => ({
-      ...result,
-      thingType: result.thingType ?? "boardgame",
-      displayName: result.displayName || result.name,
-      canonicalName: result.canonicalName || result.name,
-      locale
-    }));
+    return dedupeSearchResults(
+      cached.map((result) => ({
+        ...result,
+        thingType: result.thingType ?? "boardgame",
+        displayName: result.displayName || result.name,
+        canonicalName: result.canonicalName || result.name,
+        locale
+      }))
+    );
   }
 
   const xml = await fetchBggXml(
@@ -227,7 +332,7 @@ export async function searchBgg(query: string, locale: Locale = "en") {
     };
   };
 
-  const results = asArray(parsed.items?.item)
+  const results = dedupeSearchResults(asArray(parsed.items?.item)
     .map((item) => ({
       bggId: String(item["@_id"] ?? ""),
       thingType: normalizeThingType(item["@_type"]),
@@ -238,8 +343,7 @@ export async function searchBgg(query: string, locale: Locale = "en") {
       yearPublished: attrNumber(item.yearpublished),
       source: "bgg" as const
     }))
-    .filter((item) => item.bggId && item.name)
-    .slice(0, 20);
+    .filter((item) => item.bggId && item.name));
 
   setCache(cacheKey, results, SEARCH_CACHE_TTL_SECONDS);
   return results;

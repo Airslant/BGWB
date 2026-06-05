@@ -19,6 +19,24 @@ export const BOARD_ANNOTATION_LINE_WIDTHS = [1, 2, 4] as const;
 export const BOARD_ANNOTATION_FONT_SIZES = [14, 18, 24] as const;
 export const EMAIL_CODE_PURPOSES = ["register", "reset_password"] as const;
 export const BGG_THING_TYPES = ["boardgame", "boardgameexpansion"] as const;
+export const VIEWPORT_SCALE_BASE = 0.5;
+export const MIN_VIEWPORT_ZOOM = 0.25;
+export const MAX_VIEWPORT_ZOOM = 4;
+export const MIN_VIEWPORT_SCALE = VIEWPORT_SCALE_BASE * MIN_VIEWPORT_ZOOM;
+export const MAX_VIEWPORT_SCALE = VIEWPORT_SCALE_BASE * MAX_VIEWPORT_ZOOM;
+export const BGG_LINK_TYPES = [
+  "boardgamedesigner",
+  "boardgameartist",
+  "boardgamepublisher",
+  "boardgamecategory",
+  "boardgamemechanic",
+  "boardgamefamily",
+  "boardgameexpansion",
+  "boardgameimplementation",
+  "boardgameintegration",
+  "boardgamecompilation",
+  "boardgameaccessory"
+] as const;
 
 export type BoardStatus = (typeof BOARD_STATUSES)[number];
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
@@ -30,10 +48,18 @@ export type BoardAnnotationLineWidth = (typeof BOARD_ANNOTATION_LINE_WIDTHS)[num
 export type BoardAnnotationFontSize = (typeof BOARD_ANNOTATION_FONT_SIZES)[number];
 export type EmailCodePurpose = (typeof EMAIL_CODE_PURPOSES)[number];
 export type BggThingType = (typeof BGG_THING_TYPES)[number];
+export type BggLinkType = (typeof BGG_LINK_TYPES)[number];
 
 export type LocalizedText = Partial<Record<Locale, string>>;
 export type LocalizedTextList = Partial<Record<Locale, string[]>>;
 export type LocalizedAliases = Partial<Record<Locale, string[]>>;
+export type BggLink = {
+  id?: string;
+  type: BggLinkType | string;
+  name: string;
+  inbound?: boolean;
+};
+export type BggLinksByType = Partial<Record<BggLinkType | string, BggLink[]>>;
 
 export type Viewport = {
   x: number;
@@ -79,11 +105,31 @@ export type GameSnapshot = {
   averageRating?: number;
   description?: string;
   localizedDescription?: LocalizedText;
+  links?: BggLinksByType;
   designers: string[];
+  designerLinks?: BggLink[];
   categories: string[];
+  categoryLinks?: BggLink[];
   localizedCategories?: LocalizedTextList;
   mechanics: string[];
+  mechanicLinks?: BggLink[];
   localizedMechanics?: LocalizedTextList;
+  publishers?: string[];
+  publisherLinks?: BggLink[];
+  artists?: string[];
+  artistLinks?: BggLink[];
+  families?: string[];
+  familyLinks?: BggLink[];
+  expansions?: string[];
+  expansionLinks?: BggLink[];
+  implementations?: string[];
+  implementationLinks?: BggLink[];
+  integrations?: string[];
+  integrationLinks?: BggLink[];
+  compilations?: string[];
+  compilationLinks?: BggLink[];
+  accessories?: string[];
+  accessoryLinks?: BggLink[];
 };
 
 export type BoardItem = {
