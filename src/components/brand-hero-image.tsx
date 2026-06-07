@@ -1,6 +1,12 @@
 import { withBasePath } from "@/lib/base-path";
 
 const HERO_SIZES = "100vw";
+const BRAND_HERO_VERSION = "20260608";
+
+function withHeroVersion(path: string) {
+  return `${path}?v=${BRAND_HERO_VERSION}`;
+}
+
 const WEBP_SRC_SET = [
   "/assets/brand/bgwb-collection-wall-900.webp 900w",
   "/assets/brand/bgwb-collection-wall-1280.webp 1280w",
@@ -8,7 +14,7 @@ const WEBP_SRC_SET = [
 ]
   .map((entry) => {
     const [path, size] = entry.split(" ");
-    return `${withBasePath(path)} ${size}`;
+    return `${withBasePath(withHeroVersion(path))} ${size}`;
   })
   .join(", ");
 const JPEG_SRC_SET = [
@@ -18,7 +24,7 @@ const JPEG_SRC_SET = [
 ]
   .map((entry) => {
     const [path, size] = entry.split(" ");
-    return `${withBasePath(path)} ${size}`;
+    return `${withBasePath(withHeroVersion(path))} ${size}`;
   })
   .join(", ");
 
@@ -35,7 +41,7 @@ export function BrandHeroImage({ priority = false }: { priority?: boolean }) {
         fetchPriority={priority ? "high" : "low"}
         loading="eager"
         sizes={HERO_SIZES}
-        src={withBasePath("/assets/brand/bgwb-collection-wall-1280.jpg")}
+        src={withBasePath(withHeroVersion("/assets/brand/bgwb-collection-wall-1280.jpg"))}
         srcSet={JPEG_SRC_SET}
       />
     </picture>

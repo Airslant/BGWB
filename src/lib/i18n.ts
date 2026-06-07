@@ -28,7 +28,7 @@ export function getGameDisplayName(game: Pick<GameSnapshot, "name" | "displayNam
 }
 
 export function getDefaultBoardTitle(locale: Locale) {
-  return locale === "zh-CN" ? "我的桌游展示柜" : "My Board Game Shelf";
+  return locale === "zh-CN" ? "我的桌游白板" : "My Board Game Whiteboard";
 }
 
 export function splitAliases(value: string) {
@@ -48,15 +48,15 @@ export function joinAliases(value: string[] | undefined) {
 
 export const UI_COPY = {
   en: {
-    appTitle: "Board Game Shelf",
-    appDescription: "A shareable infinite canvas for board game covers, notes, and collection status.",
+    appTitle: "Board Game Whiteboard",
+    appDescription: "A board game whiteboard for your collection, wishlist, rankings, and personal taste.",
     appKicker: "BGWB",
     login: "Log in",
     register: "Create account",
     loginTitle: "Log in",
     registerTitle: "Create account",
-    loginIntro: "Use your email and password to open your board game shelves.",
-    registerIntro: "Create an account to save and share your board game shelves.",
+    loginIntro: "Use your email and password to open your board game whiteboards.",
+    registerIntro: "Create an account to save and share your board game whiteboards.",
     nickname: "Nickname",
     email: "Email",
     password: "Password",
@@ -82,15 +82,15 @@ export const UI_COPY = {
     boardLimitUsage: "{count}/{limit} boards used",
     boardLimitReached: "Board limit reached ({limit}).",
     createFailed: "Could not create board.",
-    myBoards: "My shelves",
-    loadingBoards: "Loading shelves",
-    loadBoardsFailed: "Could not load shelves.",
+    myBoards: "My whiteboards",
+    loadingBoards: "Loading whiteboards",
+    loadBoardsFailed: "Could not load whiteboards.",
     openBoard: "Open",
     renameBoard: "Rename",
     deleteBoard: "Delete board",
     deleteBoardFailed: "Could not delete board.",
     confirmDeleteBoard: "Delete this board?",
-    confirmDeleteBoardDetail: "This only deletes your shelf. Game data and cover cache will stay local.",
+    confirmDeleteBoardDetail: "This only deletes your whiteboard. Game data and cover cache will stay local.",
     cancel: "Cancel",
     confirm: "Confirm",
     boardName: "Board name",
@@ -102,7 +102,7 @@ export const UI_COPY = {
     shareCopied: "Share link copied",
     shareCopyPrompt: "Copy this share link",
     shareCopyManual: "Copy the share link from the dialog",
-    noBoards: "No shelves yet",
+    noBoards: "No whiteboards yet",
     gamesCount: "games",
     logout: "Log out",
     account: "Account",
@@ -124,7 +124,7 @@ export const UI_COPY = {
     accountDeleteFailed: "Could not delete account.",
     shareLink: "Share",
     publicShare: "Public read-only share",
-    loadingBoard: "Opening shelf",
+    loadingBoard: "Opening whiteboard",
     boardOpenFailed: "Could not open this board",
     backHome: "Back",
     boardTitleLabel: "Board title",
@@ -237,15 +237,15 @@ export const UI_COPY = {
     } satisfies Record<BoardStatus, string>
   },
   "zh-CN": {
-    appTitle: "桌游展示柜",
-    appDescription: "把你想展示的桌游铺在一个无限画布上，用封面、备注和收藏状态组成一面可以分享的收藏墙。",
+    appTitle: "桌游白板",
+    appDescription: "一个可以容纳收藏、心愿、排行和私人偏好的桌游白板。",
     appKicker: "BGWB",
     login: "登录",
     register: "注册",
     loginTitle: "登录",
     registerTitle: "注册账号",
-    loginIntro: "使用邮箱和密码打开你的桌游展示柜。",
-    registerIntro: "创建账号，保存并分享你的桌游展示柜。",
+    loginIntro: "使用邮箱和密码打开你的桌游白板。",
+    registerIntro: "创建账号，保存并分享你的桌游白板。",
     nickname: "昵称",
     email: "邮箱",
     password: "密码",
@@ -313,7 +313,7 @@ export const UI_COPY = {
     accountDeleteFailed: "注销账户失败。",
     shareLink: "分享",
     publicShare: "公开只读分享",
-    loadingBoard: "正在打开展示柜",
+    loadingBoard: "正在打开白板",
     boardOpenFailed: "打不开这个白板",
     backHome: "回到入口",
     boardTitleLabel: "白板标题",

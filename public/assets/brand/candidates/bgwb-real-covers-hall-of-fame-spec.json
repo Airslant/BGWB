@@ -1,0 +1,361 @@
+{
+  "outputDir": "/Users/airslant/Documents/BGWB/public/assets/brand/candidates",
+  "canvases": [
+    {
+      "name": "a",
+      "title": "名人堂收藏墙",
+      "output": "bgwb-real-covers-hall-of-fame-option-a.png",
+      "games": [
+        "13",
+        "822",
+        "31260",
+        "36218",
+        "30549",
+        "9209",
+        "2651",
+        "93",
+        "42",
+        "12333",
+        "28720",
+        "120677",
+        "182028",
+        "124361",
+        "84876"
+      ],
+      "covers": [
+        {
+          "bggId": "13",
+          "name": "Catan",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/13/image.png",
+          "source": "local"
+        },
+        {
+          "bggId": "822",
+          "name": "Carcassonne",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/822/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "31260",
+          "name": "Agricola",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/31260/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "36218",
+          "name": "Dominion",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/36218/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "30549",
+          "name": "Pandemic",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/30549/image.jpg",
+          "source": "local"
+        },
+        {
+          "bggId": "9209",
+          "name": "Ticket to Ride",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/9209/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "2651",
+          "name": "Power Grid",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/2651/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "93",
+          "name": "El Grande",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/93/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "42",
+          "name": "Tigris & Euphrates",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/42/image.png",
+          "source": "download"
+        },
+        {
+          "bggId": "12333",
+          "name": "Twilight Struggle",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/12333/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "28720",
+          "name": "Brass: Lancashire",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/28720/image.jpg",
+          "source": "local"
+        },
+        {
+          "bggId": "120677",
+          "name": "Terra Mystica",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/120677/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "182028",
+          "name": "Through the Ages",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/182028/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "124361",
+          "name": "Concordia",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/124361/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "84876",
+          "name": "The Castles of Burgundy",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/84876/image.jpg",
+          "source": "download"
+        }
+      ]
+    },
+    {
+      "name": "b",
+      "title": "名人堂全明星",
+      "output": "bgwb-real-covers-hall-of-fame-option-b.png",
+      "games": [
+        "28720",
+        "120677",
+        "182028",
+        "124361",
+        "84876",
+        "68448",
+        "5",
+        "3076",
+        "28143",
+        "12",
+        "13",
+        "822",
+        "31260",
+        "36218",
+        "30549",
+        "167791"
+      ],
+      "covers": [
+        {
+          "bggId": "28720",
+          "name": "Brass: Lancashire",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/28720/image.jpg",
+          "source": "local"
+        },
+        {
+          "bggId": "120677",
+          "name": "Terra Mystica",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/120677/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "182028",
+          "name": "Through the Ages",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/182028/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "124361",
+          "name": "Concordia",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/124361/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "84876",
+          "name": "The Castles of Burgundy",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/84876/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "68448",
+          "name": "7 Wonders",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/68448/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "5",
+          "name": "Acquire",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/5/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "3076",
+          "name": "Puerto Rico",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/3076/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "28143",
+          "name": "Race for the Galaxy",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/28143/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "12",
+          "name": "Ra",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/12/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "13",
+          "name": "Catan",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/13/image.png",
+          "source": "local"
+        },
+        {
+          "bggId": "822",
+          "name": "Carcassonne",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/822/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "31260",
+          "name": "Agricola",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/31260/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "36218",
+          "name": "Dominion",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/36218/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "30549",
+          "name": "Pandemic",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/30549/image.jpg",
+          "source": "local"
+        },
+        {
+          "bggId": "167791",
+          "name": "Terraforming Mars",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/167791/image.jpg",
+          "source": "download"
+        }
+      ]
+    },
+    {
+      "name": "c",
+      "title": "收藏墙与桌面拼局",
+      "output": "bgwb-real-covers-hall-of-fame-option-c.png",
+      "games": [
+        "9209",
+        "2651",
+        "93",
+        "42",
+        "12333",
+        "129622",
+        "172",
+        "10630",
+        "167791",
+        "39856",
+        "38453",
+        "14105",
+        "13",
+        "822",
+        "30549",
+        "28720"
+      ],
+      "covers": [
+        {
+          "bggId": "9209",
+          "name": "Ticket to Ride",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/9209/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "2651",
+          "name": "Power Grid",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/2651/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "93",
+          "name": "El Grande",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/93/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "42",
+          "name": "Tigris & Euphrates",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/42/image.png",
+          "source": "download"
+        },
+        {
+          "bggId": "12333",
+          "name": "Twilight Struggle",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/12333/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "129622",
+          "name": "Love Letter",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/129622/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "172",
+          "name": "For Sale",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/172/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "10630",
+          "name": "Memoir '44",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/10630/image.png",
+          "source": "download"
+        },
+        {
+          "bggId": "167791",
+          "name": "Terraforming Mars",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/167791/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "39856",
+          "name": "Dixit",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/39856/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "38453",
+          "name": "Space Hulk",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/38453/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "14105",
+          "name": "Commands & Colors: Ancients",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/14105/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "13",
+          "name": "Catan",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/13/image.png",
+          "source": "local"
+        },
+        {
+          "bggId": "822",
+          "name": "Carcassonne",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/822/image.jpg",
+          "source": "download"
+        },
+        {
+          "bggId": "30549",
+          "name": "Pandemic",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/30549/image.jpg",
+          "source": "local"
+        },
+        {
+          "bggId": "28720",
+          "name": "Brass: Lancashire",
+          "path": "/Users/airslant/Documents/BGWB/.data/covers/28720/image.jpg",
+          "source": "local"
+        }
+      ]
+    }
+  ]
+}
