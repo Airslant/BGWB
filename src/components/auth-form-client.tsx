@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -21,12 +21,14 @@ export function AuthFormClient({ mode }: AuthFormClientProps) {
   const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [codeCooldown, setCodeCooldown] = useState(0);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const isRegister = mode === "register";
 
   useEffect(() => {
@@ -73,6 +75,12 @@ export function AuthFormClient({ mode }: AuthFormClientProps) {
     event.preventDefault();
     setError("");
     setMessage("");
+
+    if (isRegister && password !== confirmPassword) {
+      setError(t.passwordMismatch);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -134,11 +142,34 @@ export function AuthFormClient({ mode }: AuthFormClientProps) {
             <input
               autoComplete={isRegister ? "new-password" : "current-password"}
               minLength={8}
-              type="password"
+              type={isPasswordVisible ? "text" : "password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
           </label>
+
+          {isRegister ? (
+            <label>
+              <span>{t.confirmPassword}</span>
+              <input
+                autoComplete="new-password"
+                minLength={8}
+                type={isPasswordVisible ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+              />
+            </label>
+          ) : null}
+
+          <button
+            aria-label={isPasswordVisible ? t.hidePassword : t.showPassword}
+            className="password-visibility-inline button secondary"
+            type="button"
+            onClick={() => setIsPasswordVisible((isVisible) => !isVisible)}
+          >
+            {isPasswordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+            {isPasswordVisible ? t.hidePassword : t.showPassword}
+          </button>
 
           {isRegister ? (
             <label>

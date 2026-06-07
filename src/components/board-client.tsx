@@ -22,6 +22,7 @@ import {
   Table2,
   Trash2,
   Type,
+  X,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
@@ -89,6 +90,9 @@ const MIN_ANNOTATION_SIZE = 36;
 const MIN_HOT_TO_LAME_WIDTH = 280;
 const SNAP_THRESHOLD_PX = 8;
 const STYLEBAR_ESTIMATED_WIDTH = 900;
+const MOBILE_VIEW_MEDIA_QUERY = "(max-width: 900px)";
+const MOBILE_DOUBLE_TAP_MS = 320;
+const MOBILE_TAP_MOVE_THRESHOLD = 12;
 const DEFAULT_ANNOTATION_SIZE: Record<BoardAnnotationKind, { width: number; height: number }> = {
   text: { width: 220, height: 72 },
   sticky: { width: 220, height: 140 },
@@ -194,6 +198,14 @@ type CanvasTool = "select" | DirectAnnotationTool | TemplateTool;
 type ShortcutToolAction = CanvasTool | "addGame" | "templateMenu";
 type StageSize = { width: number; height: number };
 type WorldRect = { x: number; y: number; width: number; height: number };
+type TouchPoint = { clientX: number; clientY: number };
+type MobileTapCandidate = { itemId: string; pointerId: number; clientX: number; clientY: number; time: number };
+type MobilePinchState = {
+  startDistance: number;
+  startViewport: Viewport;
+  startWorldX: number;
+  startWorldY: number;
+};
 type SnapGuide =
   | { orientation: "vertical"; position: number; start: number; end: number }
   | { orientation: "horizontal"; position: number; start: number; end: number };
@@ -315,6 +327,45 @@ function isEditableTarget(target: EventTarget | null) {
 
 function clearNativeSelection() {
   window.getSelection()?.removeAllRanges();
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+    const updateMatches = () => setMatches(mediaQuery.matches);
+
+    updateMatches();
+    mediaQuery.addEventListener("change", updateMatches);
+
+    return () => {
+      mediaQuery.removeEventListener("change", updateMatches);
+    };
+  }, [query]);
+
+  return matches;
+}
+
+function getPointDistance(a: TouchPoint, b: TouchPoint) {
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+function getPointCenter(a: TouchPoint, b: TouchPoint) {
+  return {
+    clientX: (a.clientX + b.clientX) / 2,
+    clientY: (a.clientY + b.clientY) / 2
+  };
+}
+
+function getFirstTwoTouchPoints(points: Map<number, TouchPoint>) {
+  const values = Array.from(points.values());
+
+  if (values.length < 2) {
+    return null;
+  }
+
+  return [values[0], values[1]] as const;
 }
 
 function createQuadrantText(topLeft: string, topRight: string, bottomLeft: string, bottomRight: string): QuadrantText {
@@ -871,7 +922,12 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const dragRef = useRef<DragState>({ type: "none" });
   const gestureScaleRef = useRef(1);
   const handPanKeyPressedRef = useRef(false);
+  const activeTouchPointersRef = useRef<Map<number, TouchPoint>>(new Map());
+  const mobilePinchRef = useRef<MobilePinchState | null>(null);
+  const mobileTapCandidateRef = useRef<MobileTapCandidate | null>(null);
+  const lastMobileTapRef = useRef<Omit<MobileTapCandidate, "pointerId"> | null>(null);
   const { locale, setLocale, t } = useLocale();
+  const isMobileView = useMediaQuery(MOBILE_VIEW_MEDIA_QUERY);
 
   const [title, setTitle] = useState<string>(t.appTitle);
   const [shareId, setShareId] = useState("");
@@ -895,8 +951,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const [isMinimapOpen, setIsMinimapOpen] = useState(true);
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<string[]>([]);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [mobileDetailsItemId, setMobileDetailsItemId] = useState<string | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const isReadOnly = mode === "view";
+  const canEdit = !isReadOnly && !isMobileView;
   const boardApiPath = withBasePath(apiPath ?? `/api/boards/${boardId}`);
   const boardBackHref = backHref ?? "/boards";
   const latestBoardRef = useRef({
@@ -951,6 +1009,33 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     };
   }, [annotations, items, title, viewport]);
 
+  useEffect(() => {
+    if (mobileDetailsItemId && !items.some((item) => item.id === mobileDetailsItemId)) {
+      setMobileDetailsItemId(null);
+    }
+  }, [items, mobileDetailsItemId]);
+
+  useEffect(() => {
+    if (!isMobileView) {
+      return;
+    }
+
+    clearNativeSelection();
+    activeTouchPointersRef.current.clear();
+    mobilePinchRef.current = null;
+    mobileTapCandidateRef.current = null;
+    lastMobileTapRef.current = null;
+    dragRef.current = { type: "none" };
+    setContextMenu(null);
+    setIsAddOpen(false);
+    setIsShortcutsOpen(false);
+    setIsTemplateOpen(false);
+    setSelectedAnnotationIds([]);
+    setEditingAnnotationId(null);
+    setSnapGuides([]);
+    setIsPanning(false);
+  }, [isMobileView]);
+
   const clearAutosaveTimer = useCallback(() => {
     if (autosaveTimerRef.current) {
       window.clearTimeout(autosaveTimerRef.current);
@@ -980,6 +1065,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
   const persistBoard = useCallback(
     async (options: SaveOptions = {}) => {
+      if (!canEdit) {
+        return;
+      }
+
       clearAutosaveTimer();
 
       if (isSavingRef.current) {
@@ -1054,11 +1143,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         }
       }
     },
-    [boardApiPath, buildCompactBoardPayload, clearAutosaveTimer, locale, t.searchFailed]
+    [boardApiPath, buildCompactBoardPayload, canEdit, clearAutosaveTimer, locale, t.searchFailed]
   );
 
   const scheduleAutosave = useCallback(() => {
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -1066,10 +1155,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     autosaveTimerRef.current = window.setTimeout(() => {
       void persistBoard();
     }, AUTOSAVE_DEBOUNCE_MS);
-  }, [clearAutosaveTimer, isReadOnly, persistBoard]);
+  }, [canEdit, clearAutosaveTimer, persistBoard]);
 
   const markDirty = useCallback(() => {
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -1078,10 +1167,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     setIsDirty(true);
     setSaveState((currentState) => (currentState === "saving" ? currentState : "idle"));
     scheduleAutosave();
-  }, [isReadOnly, scheduleAutosave]);
+  }, [canEdit, scheduleAutosave]);
 
   useEffect(() => {
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -1105,7 +1194,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       window.removeEventListener("pagehide", flushPendingSave);
       clearAutosaveTimer();
     };
-  }, [clearAutosaveTimer, isReadOnly, persistBoard]);
+  }, [canEdit, clearAutosaveTimer, persistBoard]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1223,6 +1312,41 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     const stage = stageRef.current;
 
     function handlePointerMove(event: globalThis.PointerEvent) {
+      if (isMobileView && event.pointerType === "touch" && activeTouchPointersRef.current.has(event.pointerId)) {
+        activeTouchPointersRef.current.set(event.pointerId, {
+          clientX: event.clientX,
+          clientY: event.clientY
+        });
+
+        if (mobilePinchRef.current) {
+          const stageRect = stageRef.current?.getBoundingClientRect();
+          const touchPoints = getFirstTwoTouchPoints(activeTouchPointersRef.current);
+
+          if (!stageRect || !touchPoints) {
+            return;
+          }
+
+          const [firstPoint, secondPoint] = touchPoints;
+          const pinch = mobilePinchRef.current;
+          const distance = Math.max(1, getPointDistance(firstPoint, secondPoint));
+          const center = getPointCenter(firstPoint, secondPoint);
+          const nextScale = clamp(
+            pinch.startViewport.scale * (distance / pinch.startDistance),
+            MIN_VIEWPORT_SCALE,
+            MAX_VIEWPORT_SCALE
+          );
+          const localX = center.clientX - stageRect.left;
+          const localY = center.clientY - stageRect.top;
+
+          setViewport({
+            x: localX - pinch.startWorldX * nextScale,
+            y: localY - pinch.startWorldY * nextScale,
+            scale: nextScale
+          });
+          return;
+        }
+      }
+
       const drag = dragRef.current;
 
       if (drag.type === "none") {
@@ -1421,8 +1545,46 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       markDirty();
     }
 
-    function handlePointerUp() {
+    function handlePointerUp(event: globalThis.PointerEvent) {
       const drag = dragRef.current;
+
+      if (isMobileView && event.pointerType === "touch") {
+        const tapCandidate = mobileTapCandidateRef.current;
+
+        if (tapCandidate?.pointerId === event.pointerId) {
+          const travel = Math.hypot(event.clientX - tapCandidate.clientX, event.clientY - tapCandidate.clientY);
+          const now = Date.now();
+
+          if (travel <= MOBILE_TAP_MOVE_THRESHOLD) {
+            const lastTap = lastMobileTapRef.current;
+            const isDoubleTap =
+              Boolean(lastTap) &&
+              lastTap?.itemId === tapCandidate.itemId &&
+              now - lastTap.time <= MOBILE_DOUBLE_TAP_MS &&
+              Math.hypot(event.clientX - lastTap.clientX, event.clientY - lastTap.clientY) <= MOBILE_TAP_MOVE_THRESHOLD * 2;
+
+            if (isDoubleTap) {
+              setMobileDetailsItemId(tapCandidate.itemId);
+              lastMobileTapRef.current = null;
+            } else {
+              lastMobileTapRef.current = {
+                itemId: tapCandidate.itemId,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                time: now
+              };
+            }
+          }
+
+          mobileTapCandidateRef.current = null;
+        }
+
+        activeTouchPointersRef.current.delete(event.pointerId);
+
+        if (activeTouchPointersRef.current.size < 2) {
+          mobilePinchRef.current = null;
+        }
+      }
 
       if (drag.type === "annotation-create" && (drag.kind === "line" || drag.kind === "arrow")) {
         setAnnotations((currentAnnotations) =>
@@ -1481,13 +1643,17 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
     if (stage) {
       stage.addEventListener("wheel", handleNativeWheel, { passive: false });
-      stage.addEventListener("gesturestart", handleGestureStart, { passive: false });
-      stage.addEventListener("gesturechange", handleGestureChange, { passive: false });
-      stage.addEventListener("gestureend", handleGestureEnd);
+
+      if (!isMobileView) {
+        stage.addEventListener("gesturestart", handleGestureStart, { passive: false });
+        stage.addEventListener("gesturechange", handleGestureChange, { passive: false });
+        stage.addEventListener("gestureend", handleGestureEnd);
+      }
     }
 
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("blur", handleWindowBlur);
@@ -1495,6 +1661,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleWindowBlur);
@@ -1548,7 +1715,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         return;
       }
 
-      if (!isReadOnly && (event.key === "Delete" || event.key === "Backspace") && selectedAnnotationIds.length > 0) {
+      if (canEdit && (event.key === "Delete" || event.key === "Backspace") && selectedAnnotationIds.length > 0) {
         event.preventDefault();
         const selectedIds = new Set(selectedAnnotationIds);
         setAnnotations((currentAnnotations) => currentAnnotations.filter((annotation) => !selectedIds.has(annotation.id)));
@@ -1570,7 +1737,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         return;
       }
 
-      if (!isReadOnly) {
+      if (canEdit) {
         const shortcutAction = TOOL_ACTION_BY_SHORTCUT[normalizeShortcutKey(event)];
 
         if (shortcutAction) {
@@ -1612,8 +1779,9 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     clientToWorld,
     contextMenu,
     editingAnnotationId,
+    canEdit,
     isAddOpen,
-    isReadOnly,
+    isMobileView,
     isShortcutsOpen,
     markDirty,
     selectedAnnotationIds,
@@ -1623,6 +1791,71 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
   function shouldStartCanvasPan(event: PointerEvent<HTMLElement>) {
     return event.button === 1 || (event.button === 0 && handPanKeyPressedRef.current);
+  }
+
+  function startMobileTouchGesture(event: PointerEvent<HTMLElement>) {
+    if (!isMobileView || event.pointerType !== "touch") {
+      return false;
+    }
+
+    event.preventDefault();
+    clearNativeSelection();
+    event.stopPropagation();
+    setContextMenu(null);
+    setSelectedAnnotationIds([]);
+    setEditingAnnotationId(null);
+
+    activeTouchPointersRef.current.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY
+    });
+
+    const cardElement = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>(".game-card") : null;
+
+    if (activeTouchPointersRef.current.size === 1) {
+      mobileTapCandidateRef.current = cardElement?.dataset.itemId
+        ? {
+            itemId: cardElement.dataset.itemId,
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            time: Date.now()
+          }
+        : null;
+      mobilePinchRef.current = null;
+      dragRef.current = {
+        type: "pan",
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: viewportRef.current.x,
+        startY: viewportRef.current.y
+      };
+      setIsPanning(true);
+      return true;
+    }
+
+    const touchPoints = getFirstTwoTouchPoints(activeTouchPointersRef.current);
+    const stageRect = stageRef.current?.getBoundingClientRect();
+
+    if (touchPoints && stageRect) {
+      const [firstPoint, secondPoint] = touchPoints;
+      const currentViewport = viewportRef.current;
+      const center = getPointCenter(firstPoint, secondPoint);
+      const localX = center.clientX - stageRect.left;
+      const localY = center.clientY - stageRect.top;
+
+      mobilePinchRef.current = {
+        startDistance: Math.max(1, getPointDistance(firstPoint, secondPoint)),
+        startViewport: currentViewport,
+        startWorldX: (localX - currentViewport.x) / currentViewport.scale,
+        startWorldY: (localY - currentViewport.y) / currentViewport.scale
+      };
+      mobileTapCandidateRef.current = null;
+      dragRef.current = { type: "none" };
+      setIsPanning(true);
+    }
+
+    return true;
   }
 
   function startCanvasPan(event: PointerEvent<HTMLElement>) {
@@ -1641,6 +1874,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function handleStagePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (startMobileTouchGesture(event)) {
+      return;
+    }
+
     if (shouldStartCanvasPan(event)) {
       startCanvasPan(event);
       return;
@@ -1674,7 +1911,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     setSelectedAnnotationIds([]);
     setEditingAnnotationId(null);
 
-    if (!isReadOnly && isTemplateTool(activeTool)) {
+    if (canEdit && isTemplateTool(activeTool)) {
       const world = clientToWorld(event.clientX, event.clientY);
       const nextAnnotations = createTemplateAnnotations(activeTool, world.x, world.y, t);
       const nextAnnotationIds = nextAnnotations.map((annotation) => annotation.id);
@@ -1692,7 +1929,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       return;
     }
 
-    if (!isReadOnly && isDirectAnnotationTool(activeTool)) {
+    if (canEdit && isDirectAnnotationTool(activeTool)) {
       const world = clientToWorld(event.clientX, event.clientY);
       const nextAnnotation = createAnnotation(activeTool, world.x, world.y);
 
@@ -1718,12 +1955,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startItemDrag(event: PointerEvent<HTMLElement>, item: BoardItem) {
+    if (startMobileTouchGesture(event)) {
+      return;
+    }
+
     if (shouldStartCanvasPan(event)) {
       startCanvasPan(event);
       return;
     }
 
-    if (isReadOnly || activeTool !== "select") {
+    if (!canEdit || activeTool !== "select") {
       return;
     }
 
@@ -1751,7 +1992,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function updateItem(itemId: string, updater: (item: BoardItem) => BoardItem) {
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -1760,7 +2001,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function removeItem(itemId: string) {
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -1770,7 +2011,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function updateAnnotations(annotationIds: string[], updater: (annotation: BoardAnnotation) => BoardAnnotation) {
-    if (isReadOnly || annotationIds.length === 0) {
+    if (!canEdit || annotationIds.length === 0) {
       return;
     }
 
@@ -1782,7 +2023,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function removeSelectedAnnotations() {
-    if (isReadOnly || selectedAnnotationIds.length === 0) {
+    if (!canEdit || selectedAnnotationIds.length === 0) {
       return;
     }
 
@@ -1866,12 +2107,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationDrag(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (startMobileTouchGesture(event)) {
+      return;
+    }
+
     if (shouldStartCanvasPan(event)) {
       startCanvasPan(event);
       return;
     }
 
-    if (isReadOnly || activeTool !== "select" || event.button !== 0 || isEditableTarget(event.target)) {
+    if (!canEdit || activeTool !== "select" || event.button !== 0 || isEditableTarget(event.target)) {
       return;
     }
 
@@ -1906,12 +2151,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationResize(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (startMobileTouchGesture(event)) {
+      return;
+    }
+
     if (shouldStartCanvasPan(event)) {
       startCanvasPan(event);
       return;
     }
 
-    if (isReadOnly || activeTool !== "select" || event.button !== 0) {
+    if (!canEdit || activeTool !== "select" || event.button !== 0) {
       return;
     }
 
@@ -1932,12 +2181,16 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function startAnnotationWidthExtend(event: PointerEvent<HTMLElement>, annotation: BoardAnnotation) {
+    if (startMobileTouchGesture(event)) {
+      return;
+    }
+
     if (shouldStartCanvasPan(event)) {
       startCanvasPan(event);
       return;
     }
 
-    if (isReadOnly || activeTool !== "select" || event.button !== 0) {
+    if (!canEdit || activeTool !== "select" || event.button !== 0) {
       return;
     }
 
@@ -1961,7 +2214,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       return;
     }
 
-    if (isReadOnly || activeTool !== "select" || event.button !== 0) {
+    if (!canEdit || activeTool !== "select" || event.button !== 0) {
       return;
     }
 
@@ -1981,7 +2234,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     event.preventDefault();
     event.stopPropagation();
 
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -2017,12 +2270,20 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function selectCanvasTool(tool: CanvasTool) {
+    if (!canEdit) {
+      return;
+    }
+
     setActiveTool(tool);
     setContextMenu(null);
     setIsTemplateOpen(false);
   }
 
   function openAddGameDialog() {
+    if (!canEdit) {
+      return;
+    }
+
     setContextMenu(null);
     setIsShortcutsOpen(false);
     setIsTemplateOpen(false);
@@ -2032,13 +2293,13 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   function navigateMinimap(nextViewport: Viewport) {
     setViewport(nextViewport);
 
-    if (!isReadOnly) {
+    if (canEdit) {
       markDirty();
     }
   }
 
   function addGamesToBoard(games: GameSnapshot[]) {
-    if (games.length === 0) {
+    if (!canEdit || games.length === 0) {
       return;
     }
 
@@ -2082,7 +2343,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   function handleTitleChange(value: string) {
-    if (isReadOnly) {
+    if (!canEdit) {
       return;
     }
 
@@ -2145,6 +2406,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const textAnnotations = annotations.filter((annotation) => getAnnotationLayerPriority(annotation) === TEXT_LAYER_PRIORITY);
   const componentAnnotations = annotations.filter((annotation) => getAnnotationLayerPriority(annotation) === COMPONENT_LAYER_PRIORITY);
   const stylebarPosition = getStylebarPosition(selectedAnnotations, viewport, stageRef.current);
+  const mobileDetailsItem = mobileDetailsItemId ? items.find((item) => item.id === mobileDetailsItemId) : null;
 
   if (loadError) {
     return (
@@ -2160,7 +2422,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }
 
   return (
-    <main className="board-shell">
+    <main className={`board-shell${isMobileView ? " is-mobile-view" : ""}`}>
       <header className="board-toolbar">
         <div className="toolbar-left">
           <Link className="icon-button" href={boardBackHref} title={t.backHome}>
@@ -2171,7 +2433,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               aria-label={t.boardTitleLabel}
               className="title-input"
               maxLength={20}
-              readOnly={isReadOnly}
+              readOnly={!canEdit}
               value={title}
               onChange={(event) => handleTitleChange(event.target.value)}
             />
@@ -2181,7 +2443,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
         <div className="toolbar-actions">
           <LanguageSelect label={t.language} locale={locale} onChange={handleLocaleChange} />
-          {!isReadOnly ? (
+          {canEdit ? (
             <ShortcutHelp
               isOpen={isShortcutsOpen}
               t={t}
@@ -2189,33 +2451,39 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               onToggle={() => setIsShortcutsOpen((isOpen) => !isOpen)}
             />
           ) : null}
-          <button
-            aria-pressed={isMinimapOpen}
-            className={`icon-button${isMinimapOpen ? " is-active" : ""}`}
-            type="button"
-            onClick={() => setIsMinimapOpen((isOpen) => !isOpen)}
-            title={isMinimapOpen ? t.hideMinimap : t.showMinimap}
-          >
-            <Grid2X2 size={18} />
-          </button>
-          <button className="icon-button" type="button" onClick={() => zoomBy(0.9)} title={t.zoomOut}>
-            <ZoomOut size={18} />
-          </button>
-          <span className="zoom-pill">{Math.round((viewport.scale / VIEWPORT_SCALE_BASE) * 100)}%</span>
-          <button className="icon-button" type="button" onClick={() => zoomBy(1.1)} title={t.zoomIn}>
-            <ZoomIn size={18} />
-          </button>
+          {!isMobileView ? (
+            <>
+              <button
+                aria-pressed={isMinimapOpen}
+                className={`icon-button${isMinimapOpen ? " is-active" : ""}`}
+                type="button"
+                onClick={() => setIsMinimapOpen((isOpen) => !isOpen)}
+                title={isMinimapOpen ? t.hideMinimap : t.showMinimap}
+              >
+                <Grid2X2 size={18} />
+              </button>
+              <button className="icon-button" type="button" onClick={() => zoomBy(0.9)} title={t.zoomOut}>
+                <ZoomOut size={18} />
+              </button>
+              <span className="zoom-pill">{Math.round((viewport.scale / VIEWPORT_SCALE_BASE) * 100)}%</span>
+              <button className="icon-button" type="button" onClick={() => zoomBy(1.1)} title={t.zoomIn}>
+                <ZoomIn size={18} />
+              </button>
+            </>
+          ) : null}
           {!isReadOnly && shareId ? (
-            <button className="button secondary" type="button" onClick={shareBoard}>
+            <button className="button secondary board-share-button" type="button" onClick={shareBoard}>
               <Share2 size={18} />
-              {t.shareBoard}
+              <span>{t.shareBoard}</span>
             </button>
           ) : null}
           {shareMessage ? <span className="copy-hint toolbar-copy-hint">{shareMessage}</span> : null}
         </div>
       </header>
 
-      {!isReadOnly ? (
+      {isMobileView ? <div className="mobile-view-notice">{t.mobileViewOnlyNotice}</div> : null}
+
+      {canEdit ? (
         <>
           <CanvasToolRail
             activeTool={activeTool}
@@ -2243,7 +2511,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         </>
       ) : null}
 
-      {isMinimapOpen && stageSize.width > 0 && stageSize.height > 0 ? (
+      {!isMobileView && isMinimapOpen && stageSize.width > 0 && stageSize.height > 0 ? (
         <BoardMinimap
           annotations={annotations}
           items={items}
@@ -2256,7 +2524,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
       <section
         ref={stageRef}
-        className={`canvas-stage${isPanning ? " is-panning" : ""}${activeTool !== "select" && !isReadOnly ? " is-tool-active" : ""}`}
+        className={`canvas-stage${isPanning ? " is-panning" : ""}${activeTool !== "select" && canEdit ? " is-tool-active" : ""}`}
         onPointerDown={handleStagePointerDown}
       >
         <div className="canvas-grid" />
@@ -2284,7 +2552,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
                   updatedAt: new Date().toISOString()
                 }))
               }
-              readOnly={isReadOnly}
+              readOnly={!canEdit}
               selected={selectedAnnotationIds.includes(annotation.id)}
               t={t}
             />
@@ -2294,12 +2562,14 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
               item={item}
               key={item.id}
               locale={locale}
+              mobileDetailsEnabled={isMobileView}
               zIndex={getLayerZIndex(GAME_CARD_LAYER_PRIORITY, index)}
               onContextMenu={openItemContextMenu}
               onDragStart={startItemDrag}
+              onMobileDetailsOpen={setMobileDetailsItemId}
               onRemove={removeItem}
               onUpdate={updateItem}
-              readOnly={isReadOnly}
+              readOnly={!canEdit}
               t={t}
             />
           ))}
@@ -2321,7 +2591,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
                   updatedAt: new Date().toISOString()
                 }))
               }
-              readOnly={isReadOnly}
+              readOnly={!canEdit}
               selected={selectedAnnotationIds.includes(annotation.id)}
               t={t}
             />
@@ -2331,7 +2601,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
           ))}
         </div>
 
-        {items.length === 0 && !isReadOnly ? (
+        {items.length === 0 && canEdit ? (
           <button className="empty-canvas-cta" type="button" onClick={openAddGameDialog}>
             <Plus size={20} />
             {t.emptyBoard}
@@ -2340,18 +2610,20 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
       </section>
 
       <footer className="board-footer">
-        <div className="board-save-status">
-          <span>{isReadOnly ? t.publicShare : saveState === "saving" ? t.saving : saveState === "error" ? t.saveFailed : isDirty ? t.unsaved : t.synced}</span>
-          {saveState === "error" && !isReadOnly ? (
-            <button className="footer-retry" type="button" onClick={() => void persistBoard()}>
-              {t.retrySave}
-            </button>
-          ) : null}
-        </div>
+        {!isMobileView ? (
+          <div className="board-save-status">
+            <span>{isReadOnly ? t.publicShare : saveState === "saving" ? t.saving : saveState === "error" ? t.saveFailed : isDirty ? t.unsaved : t.synced}</span>
+            {saveState === "error" && canEdit ? (
+              <button className="footer-retry" type="button" onClick={() => void persistBoard()}>
+                {t.retrySave}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <BggAttribution />
       </footer>
 
-      {contextMenu && contextMenuItem && !isReadOnly ? (
+      {contextMenu && contextMenuItem && canEdit ? (
         <CardContextMenu
           item={contextMenuItem}
           onClose={() => setContextMenu(null)}
@@ -2363,7 +2635,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         />
       ) : null}
 
-      {isAddOpen && !isReadOnly ? (
+      {isAddOpen && canEdit ? (
         <SearchDialog
           locale={locale}
           onClose={() => setIsAddOpen(false)}
@@ -2371,6 +2643,10 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
           onSelectMany={addGamesToBoard}
           t={t}
         />
+      ) : null}
+
+      {mobileDetailsItem ? (
+        <MobileGameDetailsSheet item={mobileDetailsItem} locale={locale} onClose={() => setMobileDetailsItemId(null)} t={t} />
       ) : null}
     </main>
   );
@@ -3396,11 +3672,82 @@ function AnnotationObject({
   );
 }
 
+function MobileGameDetailsSheet({
+  item,
+  locale,
+  onClose,
+  t
+}: {
+  item: BoardItem;
+  locale: Locale;
+  onClose: () => void;
+  t: UiCopy;
+}) {
+  const game = item.gameSnapshot;
+  const displayName = getGameDisplayName(game, locale);
+  const coverUrl = compactCoverCandidates(game)[0];
+  const players = formatPlayers(game, t.people);
+  const playTime = formatPlayTime(game, t.minutes);
+  const rating = formatRating(game);
+  const displayCategories = game.localizedCategories?.[locale] ?? game.categories;
+  const displayMechanics = game.localizedMechanics?.[locale] ?? game.mechanics;
+  const displayDescription = game.localizedDescription?.[locale] || game.description;
+
+  return (
+    <div className="mobile-details-backdrop" onClick={onClose}>
+      <aside
+        aria-label={t.mobileGameDetails}
+        className="mobile-details-sheet"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mobile-details-header">
+          <div>
+            <h2>{displayName}</h2>
+            <span>BGG #{game.bggId}</span>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} title={t.closeDetails} aria-label={t.closeDetails}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mobile-details-body">
+          {coverUrl ? (
+            <img className="mobile-details-cover" alt={displayName} src={withBasePath(coverUrl)} />
+          ) : (
+            <div className="mobile-details-cover mobile-details-cover-placeholder">
+              <ImageOff size={26} />
+              {t.noCover}
+            </div>
+          )}
+
+          <div className="info-grid">
+            <InfoRow label={t.year} value={game.yearPublished} />
+            <InfoRow label={t.players} value={players} />
+            <InfoRow label={t.playTime} value={playTime} />
+            <InfoRow label={t.age} value={game.minAge ? `${game.minAge}+` : ""} />
+            <InfoRow label={t.rating} value={rating} />
+            <InfoRow label={t.status} value={t.statusLabels[item.status]} />
+          </div>
+
+          <InfoRow label={t.designers} value={game.designers.join(" / ")} />
+          <InfoRow label={t.categories} value={displayCategories.join(" / ")} />
+          <InfoRow label={t.mechanics} value={displayMechanics.join(" / ")} />
+          <InfoRow label={t.note} value={item.note} />
+          {displayDescription ? <p className="game-description">{displayDescription}</p> : null}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function GameCard({
   item,
   locale,
+  mobileDetailsEnabled,
   onContextMenu,
   onDragStart,
+  onMobileDetailsOpen,
   onRemove,
   onUpdate,
   readOnly,
@@ -3409,8 +3756,10 @@ function GameCard({
 }: {
   item: BoardItem;
   locale: Locale;
+  mobileDetailsEnabled: boolean;
   onContextMenu: (event: MouseEvent<HTMLElement>, item: BoardItem) => void;
   onDragStart: (event: PointerEvent<HTMLElement>, item: BoardItem) => void;
+  onMobileDetailsOpen: (itemId: string) => void;
   onRemove: (itemId: string) => void;
   onUpdate: (itemId: string, updater: (item: BoardItem) => BoardItem) => void;
   readOnly: boolean;
@@ -3445,7 +3794,20 @@ function GameCard({
   return (
     <article
       className="game-card"
+      data-item-id={item.id}
       onContextMenu={(event) => onContextMenu(event, item)}
+      onClick={(event) => {
+        if (mobileDetailsEnabled && event.detail >= 2) {
+          event.preventDefault();
+          onMobileDetailsOpen(item.id);
+        }
+      }}
+      onDoubleClick={(event) => {
+        if (mobileDetailsEnabled) {
+          event.preventDefault();
+          onMobileDetailsOpen(item.id);
+        }
+      }}
       onPointerDown={(event) => onDragStart(event, item)}
       style={{
         "--layer-z-index": zIndex,
