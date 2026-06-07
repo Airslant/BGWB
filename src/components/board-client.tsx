@@ -93,6 +93,8 @@ const STYLEBAR_ESTIMATED_WIDTH = 900;
 const MOBILE_VIEW_MEDIA_QUERY = "(max-width: 900px)";
 const MOBILE_DOUBLE_TAP_MS = 320;
 const MOBILE_TAP_MOVE_THRESHOLD = 12;
+const VIEWPORT_STORAGE_PREFIX = "bgwb.boardViewport.";
+const LOCAL_VIEWPORT_SAVE_DEBOUNCE_MS = 160;
 const DEFAULT_ANNOTATION_SIZE: Record<BoardAnnotationKind, { width: number; height: number }> = {
   text: { width: 220, height: 72 },
   sticky: { width: 220, height: 140 },
@@ -327,6 +329,54 @@ function isEditableTarget(target: EventTarget | null) {
 
 function clearNativeSelection() {
   window.getSelection()?.removeAllRanges();
+}
+
+function getViewportStorageKey(boardId: string) {
+  return `${VIEWPORT_STORAGE_PREFIX}${boardId}`;
+}
+
+function sanitizeLocalViewport(value: unknown): Viewport | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const viewport = value as Partial<Viewport>;
+  const x = viewport.x;
+  const y = viewport.y;
+  const scale = viewport.scale;
+
+  if (
+    typeof x !== "number" ||
+    typeof y !== "number" ||
+    typeof scale !== "number" ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(scale)
+  ) {
+    return null;
+  }
+
+  return {
+    x,
+    y,
+    scale: clamp(scale, MIN_VIEWPORT_SCALE, MAX_VIEWPORT_SCALE)
+  };
+}
+
+function readStoredViewport(boardId: string) {
+  try {
+    return sanitizeLocalViewport(JSON.parse(window.localStorage.getItem(getViewportStorageKey(boardId)) ?? "null"));
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredViewport(boardId: string, viewport: Viewport) {
+  try {
+    window.localStorage.setItem(getViewportStorageKey(boardId), JSON.stringify(viewport));
+  } catch {
+    // Local view restoration is a convenience only; ignore quota or privacy-mode failures.
+  }
 }
 
 function useMediaQuery(query: string) {
@@ -964,14 +1014,38 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     annotations
   });
   const autosaveTimerRef = useRef<number | null>(null);
+  const localViewportSaveTimerRef = useRef<number | null>(null);
   const isSavingRef = useRef(false);
   const pendingSaveRef = useRef(false);
   const isDirtyRef = useRef(false);
   const changeVersionRef = useRef(0);
+  const hasLoadedBoardRef = useRef(false);
 
   useEffect(() => {
     viewportRef.current = viewport;
   }, [viewport]);
+
+  useEffect(() => {
+    if (isLoading || loadError || !hasLoadedBoardRef.current) {
+      return;
+    }
+
+    if (localViewportSaveTimerRef.current) {
+      window.clearTimeout(localViewportSaveTimerRef.current);
+    }
+
+    localViewportSaveTimerRef.current = window.setTimeout(() => {
+      writeStoredViewport(boardId, viewportRef.current);
+      localViewportSaveTimerRef.current = null;
+    }, LOCAL_VIEWPORT_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (localViewportSaveTimerRef.current) {
+        window.clearTimeout(localViewportSaveTimerRef.current);
+        localViewportSaveTimerRef.current = null;
+      }
+    };
+  }, [boardId, isLoading, loadError, viewport]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -1048,7 +1122,6 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
     return {
       title: currentBoard.title,
-      viewport: currentBoard.viewport,
       items: currentBoard.items.map((item) => ({
         id: item.id,
         bggId: item.bggId,
@@ -1112,14 +1185,14 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
           setIsDirty(true);
           setSaveState("idle");
         } else {
+          const currentViewport = viewportRef.current;
           latestBoardRef.current = {
             title: payload.board.title,
-            viewport: payload.board.viewport,
+            viewport: currentViewport,
             items: payload.board.items,
             annotations: payload.board.annotations ?? []
           };
           setTitle(payload.board.title);
-          setViewport(payload.board.viewport);
           setItems(payload.board.items);
           setAnnotations(payload.board.annotations ?? []);
           setCreatedAt(payload.board.createdAt);
@@ -1202,6 +1275,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     async function loadBoard() {
       setIsLoading(true);
       setLoadError("");
+      hasLoadedBoardRef.current = false;
 
       try {
         const response = await fetch(`${boardApiPath}?locale=${encodeURIComponent(locale)}`);
@@ -1215,8 +1289,9 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
           return;
         }
 
+        const initialViewport = readStoredViewport(boardId) ?? payload.board.viewport;
         setTitle(payload.board.title);
-        setViewport(payload.board.viewport);
+        setViewport(initialViewport);
         setItems(payload.board.items);
         setAnnotations(payload.board.annotations ?? []);
         setCreatedAt(payload.board.createdAt);
@@ -1224,10 +1299,11 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         setShareId(payload.board.shareId);
         latestBoardRef.current = {
           title: payload.board.title,
-          viewport: payload.board.viewport,
+          viewport: initialViewport,
           items: payload.board.items,
           annotations: payload.board.annotations ?? []
         };
+        hasLoadedBoardRef.current = true;
         setSelectedAnnotationIds([]);
         setEditingAnnotationId(null);
         clearAutosaveTimer();
@@ -1238,6 +1314,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         setSaveState("idle");
       } catch (error) {
         if (!cancelled) {
+          hasLoadedBoardRef.current = false;
           setLoadError(error instanceof Error ? error.message : t.detailFailed);
         }
       } finally {
@@ -1252,7 +1329,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     return () => {
       cancelled = true;
     };
-  }, [boardApiPath, clearAutosaveTimer, locale, t.detailFailed]);
+  }, [boardApiPath, boardId, clearAutosaveTimer, locale, t.detailFailed]);
 
   const clientToWorld = useCallback((clientX: number, clientY: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -1292,9 +1369,8 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         y: localY - worldY * nextScale,
         scale: nextScale
       });
-      markDirty();
     },
-    [markDirty]
+    []
   );
 
   const zoomBy = useCallback(
@@ -1361,7 +1437,6 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         };
 
         setViewport(nextViewport);
-        markDirty();
         return;
       }
 
@@ -2292,10 +2367,6 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
 
   function navigateMinimap(nextViewport: Viewport) {
     setViewport(nextViewport);
-
-    if (canEdit) {
-      markDirty();
-    }
   }
 
   function addGamesToBoard(games: GameSnapshot[]) {
