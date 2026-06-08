@@ -94,6 +94,7 @@ const MOBILE_VIEW_MEDIA_QUERY = "(max-width: 900px)";
 const MOBILE_DOUBLE_TAP_MS = 320;
 const MOBILE_TAP_MOVE_THRESHOLD = 12;
 const VIEWPORT_STORAGE_PREFIX = "bgwb.boardViewport.";
+const MOBILE_VIEWPORT_STORAGE_PREFIX = "bgwb.boardMobileViewport.";
 const LOCAL_VIEWPORT_SAVE_DEBOUNCE_MS = 160;
 const DEFAULT_ANNOTATION_SIZE: Record<BoardAnnotationKind, { width: number; height: number }> = {
   text: { width: 220, height: 72 },
@@ -331,8 +332,8 @@ function clearNativeSelection() {
   window.getSelection()?.removeAllRanges();
 }
 
-function getViewportStorageKey(boardId: string) {
-  return `${VIEWPORT_STORAGE_PREFIX}${boardId}`;
+function getViewportStorageKey(boardId: string, isMobileView = false) {
+  return `${isMobileView ? MOBILE_VIEWPORT_STORAGE_PREFIX : VIEWPORT_STORAGE_PREFIX}${boardId}`;
 }
 
 function sanitizeLocalViewport(value: unknown): Viewport | null {
@@ -363,20 +364,47 @@ function sanitizeLocalViewport(value: unknown): Viewport | null {
   };
 }
 
-function readStoredViewport(boardId: string) {
+function readStoredViewport(boardId: string, isMobileView = false) {
   try {
-    return sanitizeLocalViewport(JSON.parse(window.localStorage.getItem(getViewportStorageKey(boardId)) ?? "null"));
+    return sanitizeLocalViewport(JSON.parse(window.localStorage.getItem(getViewportStorageKey(boardId, isMobileView)) ?? "null"));
   } catch {
     return null;
   }
 }
 
-function writeStoredViewport(boardId: string, viewport: Viewport) {
+function writeStoredViewport(boardId: string, viewport: Viewport, isMobileView = false) {
   try {
-    window.localStorage.setItem(getViewportStorageKey(boardId), JSON.stringify(viewport));
+    window.localStorage.setItem(getViewportStorageKey(boardId, isMobileView), JSON.stringify(viewport));
   } catch {
     // Local view restoration is a convenience only; ignore quota or privacy-mode failures.
   }
+}
+
+function getStageSizeFallback(stage: HTMLElement | null): StageSize {
+  const rect = stage?.getBoundingClientRect();
+
+  if (rect && rect.width > 0 && rect.height > 0) {
+    return { width: rect.width, height: rect.height };
+  }
+
+  return {
+    width: typeof window === "undefined" ? 0 : window.innerWidth,
+    height: typeof window === "undefined" ? 0 : window.innerHeight
+  };
+}
+
+function getViewportCenteredOnItem(item: BoardItem, stageSize: StageSize, scale = VIEWPORT_SCALE_BASE): Viewport {
+  const itemRect = getItemWorldRect(item);
+  const itemCenterX = itemRect.x + itemRect.width / 2;
+  const itemCenterY = itemRect.y + itemRect.height / 2;
+  const stageWidth = Math.max(stageSize.width, 1);
+  const stageHeight = Math.max(stageSize.height, 1);
+
+  return {
+    x: stageWidth / 2 - itemCenterX * scale,
+    y: stageHeight / 2 - itemCenterY * scale,
+    scale
+  };
 }
 
 function useMediaQuery(query: string) {
@@ -976,6 +1004,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   const mobilePinchRef = useRef<MobilePinchState | null>(null);
   const mobileTapCandidateRef = useRef<MobileTapCandidate | null>(null);
   const lastMobileTapRef = useRef<Omit<MobileTapCandidate, "pointerId"> | null>(null);
+  const pendingMobileInitialFocusItemRef = useRef<BoardItem | null>(null);
   const { locale, setLocale, t } = useLocale();
   const isMobileView = useMediaQuery(MOBILE_VIEW_MEDIA_QUERY);
 
@@ -1026,6 +1055,22 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
   }, [viewport]);
 
   useEffect(() => {
+    const focusItem = pendingMobileInitialFocusItemRef.current;
+
+    if (!isMobileView || isLoading || loadError || !focusItem || stageSize.width <= 0 || stageSize.height <= 0) {
+      return;
+    }
+
+    const nextViewport = getViewportCenteredOnItem(focusItem, stageSize, viewportRef.current.scale);
+    pendingMobileInitialFocusItemRef.current = null;
+    setViewport(nextViewport);
+    latestBoardRef.current = {
+      ...latestBoardRef.current,
+      viewport: nextViewport
+    };
+  }, [isLoading, isMobileView, loadError, stageSize.height, stageSize.width]);
+
+  useEffect(() => {
     if (isLoading || loadError || !hasLoadedBoardRef.current) {
       return;
     }
@@ -1035,7 +1080,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     }
 
     localViewportSaveTimerRef.current = window.setTimeout(() => {
-      writeStoredViewport(boardId, viewportRef.current);
+      writeStoredViewport(boardId, viewportRef.current, isMobileView);
       localViewportSaveTimerRef.current = null;
     }, LOCAL_VIEWPORT_SAVE_DEBOUNCE_MS);
 
@@ -1045,7 +1090,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         localViewportSaveTimerRef.current = null;
       }
     };
-  }, [boardId, isLoading, loadError, viewport]);
+  }, [boardId, isLoading, isMobileView, loadError, viewport]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -1289,7 +1334,15 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
           return;
         }
 
-        const initialViewport = readStoredViewport(boardId) ?? payload.board.viewport;
+        const storedViewport = readStoredViewport(boardId, isMobileView);
+        const firstBoardItem = payload.board.items[0] ?? null;
+        const shouldFocusFirstItemOnMobile = !storedViewport && isMobileView && Boolean(firstBoardItem);
+        const initialViewport =
+          storedViewport ??
+          (shouldFocusFirstItemOnMobile && firstBoardItem
+            ? getViewportCenteredOnItem(firstBoardItem, getStageSizeFallback(stageRef.current), VIEWPORT_SCALE_BASE)
+            : payload.board.viewport);
+        pendingMobileInitialFocusItemRef.current = shouldFocusFirstItemOnMobile ? firstBoardItem : null;
         setTitle(payload.board.title);
         setViewport(initialViewport);
         setItems(payload.board.items);
@@ -1329,7 +1382,7 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
     return () => {
       cancelled = true;
     };
-  }, [boardApiPath, boardId, clearAutosaveTimer, locale, t.detailFailed]);
+  }, [boardApiPath, boardId, clearAutosaveTimer, isMobileView, locale, t.detailFailed]);
 
   const clientToWorld = useCallback((clientX: number, clientY: number) => {
     const rect = stageRef.current?.getBoundingClientRect();
@@ -2552,7 +2605,12 @@ export function BoardClient({ apiPath, backHref, boardId, mode = "edit" }: Board
         </div>
       </header>
 
-      {isMobileView ? <div className="mobile-view-notice">{t.mobileViewOnlyNotice}</div> : null}
+      {isMobileView ? (
+        <div className="mobile-view-notice">
+          <span>{t.mobileViewOnlyNotice}</span>
+          <span>{t.mobileDoubleTapDetailsHint}</span>
+        </div>
+      ) : null}
 
       {canEdit ? (
         <>

@@ -2004,8 +2004,10 @@ a {
   background: rgba(35, 70, 109, 0.92);
   color: #fffaf0;
   display: flex;
+  flex-direction: column;
   font-size: 13px;
   font-weight: 800;
+  gap: 2px;
   justify-content: center;
   padding: 9px 16px;
   text-align: center;
