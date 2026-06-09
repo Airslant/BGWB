@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeft,
   BarChart3,
   CheckCircle2,
   FileDown,
@@ -43,9 +44,34 @@ type AnalyticsResponse = {
   missingZhDescriptions: Array<{ bggId: string; englishName: string; itemCount: number }>;
   trend: Array<{ date: string; users: number; boardsCreated: number; boardsUpdated: number }>;
 };
+type AnalyticsTrendRow = AnalyticsResponse["trend"][number];
 
 function formatDate(value: string | undefined) {
   return value ? new Date(value).toLocaleDateString() : "-";
+}
+
+function buildAdminGamesPath(query: string, page: number) {
+  const params = new URLSearchParams();
+  const trimmedQuery = query.trim();
+
+  if (trimmedQuery) {
+    params.set("q", trimmedQuery);
+  }
+
+  if (page > 1) {
+    params.set("page", String(page));
+  }
+
+  const queryString = params.toString();
+  return `/admin/games${queryString ? `?${queryString}` : ""}`;
+}
+
+function getSafeAdminGamesReturnPath(value: string | null) {
+  if (!value) {
+    return "/admin/games";
+  }
+
+  return value === "/admin/games" || value.startsWith("/admin/games?") ? value : "/admin/games";
 }
 
 function joinAliases(value: string[] | undefined) {
@@ -474,11 +500,13 @@ export function AdminUsersClient() {
   );
 }
 
-export function AdminGamesClient() {
-  const [query, setQuery] = useState("");
+export function AdminGamesClient({ initialPage = 1, initialQuery = "" }: { initialPage?: number; initialQuery?: string }) {
+  const router = useRouter();
+  const [query, setQuery] = useState(initialQuery);
+  const [activeQuery, setActiveQuery] = useState(initialQuery);
   const [games, setGames] = useState<AdminGameSummary[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(initialPage);
   const [pageSize, setPageSize] = useState(20);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -496,10 +524,13 @@ export function AdminGamesClient() {
         throw new Error(payload.error ?? "加载桌游失败");
       }
 
+      const resolvedPage = payload.page ?? nextPage;
       setGames(payload.games ?? []);
       setTotal(payload.total ?? 0);
-      setPage(payload.page ?? nextPage);
+      setPage(resolvedPage);
+      setActiveQuery(nextQuery);
       setPageSize(payload.pageSize ?? 20);
+      router.replace(buildAdminGamesPath(nextQuery, resolvedPage), { scroll: false });
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "加载桌游失败");
     } finally {
@@ -524,6 +555,7 @@ export function AdminGamesClient() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const pageStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const pageEnd = Math.min(total, page * pageSize);
+  const currentListPath = buildAdminGamesPath(activeQuery, page);
 
   return (
     <AdminFrame title="桌游信息管理" subtitle={`本地详情库共 ${total} 款桌游`}>
@@ -564,7 +596,7 @@ export function AdminGamesClient() {
                 <td>{game.itemCount}</td>
                 <td>{formatDate(game.updatedAt)}</td>
                 <td>
-                  <Link className="button secondary" href={`/admin/games/${game.bggId}`}>
+                  <Link className="button secondary" href={`/admin/games/${game.bggId}?returnTo=${encodeURIComponent(currentListPath)}`}>
                     编辑
                   </Link>
                 </td>
@@ -619,7 +651,7 @@ function TermEditor({
   );
 }
 
-export function AdminGameDetailClient({ bggId }: { bggId: string }) {
+export function AdminGameDetailClient({ bggId, returnTo }: { bggId: string; returnTo?: string }) {
   const [game, setGame] = useState<AdminGameDetail | null>(null);
   const [englishName, setEnglishName] = useState("");
   const [zhName, setZhName] = useState("");
@@ -747,6 +779,7 @@ export function AdminGameDetailClient({ bggId }: { bggId: string }) {
       ["被使用", game.itemCount]
     ];
   }, [game]);
+  const safeReturnTo = getSafeAdminGamesReturnPath(returnTo ?? null);
 
   if (isLoading) {
     return (
@@ -758,6 +791,12 @@ export function AdminGameDetailClient({ bggId }: { bggId: string }) {
 
   return (
     <AdminFrame title={game?.englishName ?? "桌游详情"} subtitle={`BGG ID ${bggId}`}>
+      <div className="admin-page-actions">
+        <Link className="button secondary" href={safeReturnTo}>
+          <ArrowLeft size={17} />
+          返回列表
+        </Link>
+      </div>
       {error ? <p className="error-text">{error}</p> : null}
       {notice ? <p className="success-text">{notice}</p> : null}
       {game ? (
@@ -839,6 +878,101 @@ function MetricCard({ label, value }: { label: string; value: number }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function formatTrendDate(value: string) {
+  const [, month, day] = value.split("-");
+
+  return month && day ? `${Number(month)}/${Number(day)}` : value;
+}
+
+function buildTrendLinePath(points: Array<{ x: number; y: number }>) {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+}
+
+function AdminTrendChart({ trend }: { trend: AnalyticsTrendRow[] }) {
+  const width = 920;
+  const height = 320;
+  const padding = { bottom: 42, left: 46, right: 24, top: 28 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const maxValue = Math.max(1, ...trend.flatMap((row) => [row.users, row.boardsCreated, row.boardsUpdated]));
+  const xForIndex = (index: number) => padding.left + (trend.length <= 1 ? plotWidth / 2 : (index / (trend.length - 1)) * plotWidth);
+  const yForValue = (value: number) => padding.top + plotHeight - (value / maxValue) * plotHeight;
+  const yTicks = Array.from({ length: 5 }, (_, index) => ({
+    index,
+    value: Math.round((maxValue * (4 - index)) / 4)
+  }));
+  const dateTicks = trend
+    .map((row, index) => ({ index, row }))
+    .filter(({ index }) => index === 0 || index === trend.length - 1 || index % 7 === 0);
+  const series = [
+    { color: "#23466d", key: "users", label: "注册用户" },
+    { color: "#3f6f5a", key: "boardsCreated", label: "新建白板" },
+    { color: "#c48222", key: "boardsUpdated", label: "更新白板" }
+  ] as const;
+
+  return (
+    <section className="admin-trend-card">
+      <div className="admin-trend-header">
+        <div>
+          <h2>30 天趋势</h2>
+          <p>按天统计注册用户、新建白板和更新白板。</p>
+        </div>
+        <div className="admin-trend-legend">
+          {series.map((item) => (
+            <span key={item.key}>
+              <i style={{ backgroundColor: item.color }} />
+              {item.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="admin-trend-chart-scroll">
+        <svg aria-label="30 天趋势图" className="admin-trend-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
+          {yTicks.map(({ index, value }) => {
+            const y = yForValue(value);
+
+            return (
+              <g key={`y-${index}`}>
+                <line className="admin-trend-grid-line" x1={padding.left} x2={width - padding.right} y1={y} y2={y} />
+                <text className="admin-trend-axis-label" x={padding.left - 12} y={y + 4}>
+                  {value}
+                </text>
+              </g>
+            );
+          })}
+          {dateTicks.map(({ index, row }) => {
+            const x = xForIndex(index);
+
+            return (
+              <text className="admin-trend-axis-label admin-trend-date-label" key={row.date} x={x} y={height - 12}>
+                {formatTrendDate(row.date)}
+              </text>
+            );
+          })}
+          {series.map((item) => {
+            const points = trend.map((row, index) => ({
+              x: xForIndex(index),
+              y: yForValue(row[item.key]),
+              row
+            }));
+
+            return (
+              <g key={item.key}>
+                <path className="admin-trend-line" d={buildTrendLinePath(points)} stroke={item.color} />
+                {points.map((point) => (
+                  <circle className="admin-trend-point" cx={point.x} cy={point.y} fill={item.color} key={`${item.key}-${point.row.date}`} r={3.5}>
+                    <title>{`${point.row.date} · ${item.label}: ${point.row[item.key]}`}</title>
+                  </circle>
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </section>
   );
 }
 
@@ -935,29 +1069,7 @@ export function AdminAnalyticsClient() {
             </AdminList>
           </section>
 
-          <section className="admin-table-card">
-            <h2>30 天趋势</h2>
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>日期</th>
-                  <th>注册用户</th>
-                  <th>新建白板</th>
-                  <th>更新白板</th>
-                </tr>
-              </thead>
-              <tbody>
-                {analytics.trend.map((row) => (
-                  <tr key={row.date}>
-                    <td>{row.date}</td>
-                    <td>{row.users}</td>
-                    <td>{row.boardsCreated}</td>
-                    <td>{row.boardsUpdated}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+          <AdminTrendChart trend={analytics.trend} />
         </>
       ) : null}
     </AdminFrame>

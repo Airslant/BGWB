@@ -571,6 +571,7 @@ a {
 
 .admin-page-header,
 .admin-filter-bar,
+.admin-page-actions,
 .admin-sticky-actions {
   align-items: center;
   display: flex;
@@ -582,13 +583,15 @@ a {
 .admin-feature-card h2,
 .admin-list-card h2,
 .admin-edit-section h2,
-.admin-table-card h2 {
+.admin-table-card h2,
+.admin-trend-card h2 {
   margin: 0;
 }
 
 .admin-page-header p,
 .admin-feature-card p,
-.admin-readonly-text {
+.admin-readonly-text,
+.admin-trend-header p {
   color: var(--muted);
   line-height: 1.5;
   margin: 6px 0 0;
@@ -610,7 +613,8 @@ a {
 .admin-list-card,
 .admin-edit-section,
 .admin-detail-hero,
-.admin-metric-card {
+.admin-metric-card,
+.admin-trend-card {
   background: rgba(255, 250, 240, 0.9);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -679,6 +683,10 @@ a {
 
 .admin-table-card {
   overflow: auto;
+}
+
+.admin-page-actions {
+  justify-content: flex-start;
 }
 
 .admin-pagination {
@@ -850,6 +858,82 @@ a {
 
 .admin-analytics-grid {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.admin-trend-card {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-trend-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.admin-trend-legend {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  justify-content: flex-end;
+}
+
+.admin-trend-legend span {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.admin-trend-legend i {
+  border-radius: 999px;
+  display: inline-block;
+  height: 9px;
+  width: 9px;
+}
+
+.admin-trend-chart-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.admin-trend-chart {
+  display: block;
+  min-width: 720px;
+  width: 100%;
+}
+
+.admin-trend-grid-line {
+  stroke: rgba(222, 211, 191, 0.78);
+  stroke-width: 1;
+}
+
+.admin-trend-axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-anchor: end;
+}
+
+.admin-trend-date-label {
+  text-anchor: middle;
+}
+
+.admin-trend-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.admin-trend-point {
+  stroke: #fffaf0;
+  stroke-width: 2;
 }
 
 .admin-list-card ul {
